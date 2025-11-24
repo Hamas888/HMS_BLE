@@ -59,7 +59,9 @@
 
 /* Control Knobs *///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 #ifndef HMS_BLE_DEBUG
-  #define HMS_BLE_DEBUG_ENABLED                     1                                                                                               // Set to 1 to enable debug features
+  #define HMS_BLE_DEBUG_ENABLED                     0                                                                                               // Set to 1 to enable debug features
+#else
+  #define HMS_BLE_DEBUG_ENABLED                     HMS_BLE_DEBUG
 #endif
 
 #ifndef HMS_BLE_MAX_DATA_LENGTH
