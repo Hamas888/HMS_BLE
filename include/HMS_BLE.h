@@ -96,7 +96,7 @@
   #endif
 #endif
 
-#ifdef HMS_BLE_DEBUG_ENABLED
+#if HMS_BLE_DEBUG_ENABLED
   #define BLE_LOGGER(level, msg, ...)   \
     do {                                \
       if (bleLogger)                    \
