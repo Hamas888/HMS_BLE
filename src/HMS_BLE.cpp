@@ -9,7 +9,7 @@ HMS_BLE*            HMS_BLE::instance   = nullptr;
 HMS_BLE::HMS_BLE(const char* deviceName): 
     bleConnected(false), oldConnected(false), received(false), 
     manufacturerDataSet(false), backgroundProcess(false), bleInitialized(false), 
-    deviceName(deviceName), dataLength(0), characteristicCount(0) {
+    dataLength(0), characteristicCount(0), deviceName(deviceName) {
 
 
     BLE_LOGGER(debug, "HMS_BLE instance created");
@@ -17,7 +17,13 @@ HMS_BLE::HMS_BLE(const char* deviceName):
     instance = this;
     memset(data, 0, sizeof(data));
     memset(serviceUUID, 0, sizeof(serviceUUID));
-    memset(characteristics, 0, sizeof(characteristics));
+    
+    // CRITICAL FIX: Do not use memset on objects with std::string
+    for(int i = 0; i < HMS_BLE_MAX_CHARACTERISTICS; i++) {
+        characteristics[i].uuid.clear();
+        characteristics[i].name.clear();
+        characteristics[i].properties = (HMS_BLE_CharacteristicProperty)0;
+    }
     
     #if defined(HMS_BLE_ARDUINO_ESP32)
         memset(bleCharacteristics, 0, sizeof(bleCharacteristics));
@@ -32,7 +38,13 @@ HMS_BLE::~HMS_BLE() {
 
     memset(data, 0, sizeof(data));
     memset(serviceUUID, 0, sizeof(serviceUUID));
-    memset(characteristics, 0, sizeof(characteristics));
+    
+    // CRITICAL FIX: Do not use memset on objects with std::string
+    for(int i = 0; i < HMS_BLE_MAX_CHARACTERISTICS; i++) {
+        characteristics[i].uuid.clear();
+        characteristics[i].name.clear();
+        characteristics[i].properties = (HMS_BLE_CharacteristicProperty)0;
+    }
     
     BLE_LOGGER(debug, "HMS_BLE instance destroyed");
     #if HMS_BLE_DEBUG_ENABLED
@@ -231,6 +243,83 @@ HMS_BLE_Status HMS_BLE::sendData(const char* characteristicUUID, const uint8_t* 
             );
         } else {
             BLE_LOGGER(debug, "No clients subscribed to %s, skipping notification", characteristicUUID);
+        }
+    #elif defined(HMS_BLE_ZEPHYR_nRF)
+        // Find the attribute for this characteristic
+        const struct bt_gatt_attr *attr = nullptr;
+        
+        // Iterate through attributes to find the VALUE attribute for this characteristic
+        // We stored the index in user_data for the value attribute
+        // The simplest approach: just find by user_data (charIndex) and skip non-value attributes
+        for(size_t i = 0; i < zephyrAttrCount; i++) {
+            // Check if user_data matches our charIndex
+            if(zephyrGattAttrs[i].user_data == (void*)((intptr_t)charIndex)) {
+                // Make sure this is NOT a CCC, CHRC declaration, or CUD attribute
+                // The value attribute has the characteristic UUID, not a standard GATT UUID
+                // Standard UUIDs for non-value attrs: BT_UUID_GATT_CHRC (0x2803), BT_UUID_GATT_CCC (0x2902), etc.
+                
+                // Get the UUID type
+                const struct bt_uuid *attrUuid = zephyrGattAttrs[i].uuid;
+                
+                // If it's a 16-bit UUID, check if it's a standard descriptor UUID
+                if (attrUuid->type == BT_UUID_TYPE_16) {
+                    uint16_t val = BT_UUID_16(attrUuid)->val;
+                    // Skip standard GATT attribute UUIDs (0x2800-0x29FF range)
+                    if (val >= 0x2800 && val <= 0x29FF) {
+                        continue; // This is a GATT standard attribute, not our value
+                    }
+                }
+                
+                // This should be our value attribute
+                attr = &zephyrGattAttrs[i];
+                break;
+            }
+        }
+        
+        if (attr) {
+            // Check if notifications are enabled for this characteristic
+            // We check our ZephyrCCC struct to see if any peer has enabled notifications
+            bool notifyEnabled = false;
+            
+            // Check if we have a CCC object for this characteristic
+            // Note: We don't have a direct map from charIndex to CCC index if not all chars have CCC
+            // But our array is indexed by charIndex, so we can check directly.
+            // However, we need to know if this characteristic HAS a CCC.
+            // We can check properties.
+            
+            if (characteristics[charIndex].properties & (HMS_BLE_PROPERTY_NOTIFY | HMS_BLE_PROPERTY_INDICATE)) {
+                // Iterate through all possible connections in the CCC config
+                for (int k = 0; k < BT_GATT_CCC_MAX; k++) {
+                    if (zephyrCccObjects[charIndex].cfg[k].value != 0) {
+                        notifyEnabled = true;
+                        break;
+                    }
+                }
+            }
+            
+            if (notifyEnabled) {
+                // Send notification
+                // If connection is NULL, it notifies all connected peers with CCC enabled.
+                // We use NULL to broadcast to all subscribed peers, which matches the logic above.
+                
+                int err = bt_gatt_notify(NULL, attr, data, length);
+                if (err) {
+                    // -EACCES: Notification is not enabled (should be covered by our check, but race conditions exist)
+                    // -ENOTCONN: Not connected
+                    if (err != -ENOTCONN && err != -EACCES) {
+                        BLE_LOGGER(warn, "Notification failed (err %d)", err);
+                        return HMS_BLE_STATUS_ERROR_SEND;
+                    }
+                } else {
+                    BLE_LOGGER(debug, "Notification sent on %s", characteristicUUID);
+                }
+            } else {
+                // Silent return if no one is subscribed, just like ESP32 logic
+                // BLE_LOGGER(debug, "No clients subscribed to %s, skipping notification", characteristicUUID);
+            }
+        } else {
+            BLE_LOGGER(error, "Attribute not found for characteristic %s", characteristicUUID);
+            return HMS_BLE_STATUS_ERROR_INVALID_CHAR;
         }
     #endif
 

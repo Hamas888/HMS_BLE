@@ -57,8 +57,8 @@ void setup() {
     ble = new HMS_BLE("SmartFitTower");
 
     HMS_BLE_ManufacturerData mData = {
-        .manufacturer_id = {0xFF, 0xFF},
-        .data = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06}
+        .manufacturer_id    = {0xFF, 0xFF},
+        .data               = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06}
     };
 
     HMS_BLE_Characteristic tempChar = {
@@ -74,8 +74,9 @@ void setup() {
     };
 
     ble->setReadCallback(onRead);
-    ble->setConnectionCallback(onConnect);
     ble->setNotifyCallback(onNotify);
+    ble->setConnectionCallback(onConnect);
+    
 
     ble->setManufacturerData(mData);
     ble->addCharacteristic(&tempChar);
@@ -113,5 +114,4 @@ void loop() {
             ble->sendData(CHAR_UUID_HUMIDITY, humidityData, sizeof(uint16_t));
         }
     }
-
 }
