@@ -18,8 +18,8 @@ A complete BLE implementation for nRF52832 using the HMS_BLE library and Zephyr 
    ```
 
 2. **Fetch dependencies (HMS_BLE and ChronoLog modules):**
-   ```bash
-   west update
+   ```powershell
+   .\setup.ps1
    ```
    
    This will automatically clone:
