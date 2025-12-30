@@ -245,9 +245,6 @@ void HMS_BLE::stop() {
     }
 }
 
-// ==========================================================================================
-// Dynamic GATT Attribute Builder
-// ==========================================================================================
 int HMS_BLE::buildGattAttributes() {
     // Calculate total attributes needed:
     // 1 for Service Declaration
@@ -402,10 +399,6 @@ int HMS_BLE::buildGattAttributes() {
     return 0;
 }
 
-// ==========================================================================================
-// Callbacks
-// ==========================================================================================
-
 void HMS_BLE::zephyrConnectedCallback(struct bt_conn *conn, uint8_t err) {
     if (err) {
         BLE_LOGGER(error, "Connection failed (err %u)", err);
@@ -446,8 +439,9 @@ void HMS_BLE::zephyrDisconnectedCallback(struct bt_conn *conn, uint8_t reason) {
     }
 }
 
-ssize_t HMS_BLE::zephyrReadCallback(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-                                   void *buf, uint16_t len, uint16_t offset) {
+ssize_t HMS_BLE::zephyrReadCallback(
+    struct bt_conn *conn, const struct bt_gatt_attr *attr,void *buf, uint16_t len, uint16_t offset
+) {
     // Retrieve characteristic index from user_data
     int charIndex = (int)((intptr_t)attr->user_data);
     
@@ -473,8 +467,10 @@ ssize_t HMS_BLE::zephyrReadCallback(struct bt_conn *conn, const struct bt_gatt_a
         uint8_t mac[6];
         extractMacAddress(conn, mac);
         
-        instance->readCallback(instance->characteristics[charIndex].uuid.c_str(), 
-                               tempBuf, &outLen, mac);
+        instance->readCallback(
+            instance->characteristics[charIndex].uuid.c_str(), 
+            tempBuf, &outLen, mac
+        );
                                
         return bt_gatt_attr_read(conn, attr, buf, len, offset, tempBuf, outLen);
     }
@@ -482,8 +478,9 @@ ssize_t HMS_BLE::zephyrReadCallback(struct bt_conn *conn, const struct bt_gatt_a
     return bt_gatt_attr_read(conn, attr, buf, len, offset, NULL, 0);
 }
 
-ssize_t HMS_BLE::zephyrWriteCallback(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-                                    const void *buf, uint16_t len, uint16_t offset, uint8_t flags) {
+ssize_t HMS_BLE::zephyrWriteCallback(
+    struct bt_conn *conn, const struct bt_gatt_attr *attr,const void *buf, uint16_t len, uint16_t offset, uint8_t flags
+) {
     int charIndex = (int)((intptr_t)attr->user_data);
     
     if (instance) {
@@ -498,8 +495,10 @@ ssize_t HMS_BLE::zephyrWriteCallback(struct bt_conn *conn, const struct bt_gatt_
         if (instance->writeCallback) {
             uint8_t mac[6];
             extractMacAddress(conn, mac);
-            instance->writeCallback(instance->characteristics[charIndex].uuid.c_str(), 
-                                    (const uint8_t*)buf, len, mac);
+            instance->writeCallback(
+                instance->characteristics[charIndex].uuid.c_str(), 
+                (const uint8_t*)buf, len, mac
+            );
         }
     }
     
@@ -541,16 +540,13 @@ void HMS_BLE::zephyrCccChangedCallback(const struct bt_gatt_attr *attr, uint16_t
     }
 }
 
-// ==========================================================================================
-// Background Task for loop() processing (similar to ESP32 FreeRTOS task)
-// ==========================================================================================
 void HMS_BLE::zephyrBleTask(void* p1, void* p2, void* p3) {
     HMS_BLE* pThis = HMS_BLE::instance;
     if(!pThis) return;
     
     while(true) {
         pThis->loop();
-        k_msleep(10);  // Yield to other threads (similar to vTaskDelay on ESP32)
+        k_msleep(10);
     }
 }
 
