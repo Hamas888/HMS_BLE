@@ -35,8 +35,9 @@ A **cross-platform Bluetooth Low Energy (BLE) library** for embedded systems and
 
 - **🎯 Automatic Platform Detection**: Seamlessly adapts to ESP32 (Arduino/ESP-IDF), nRF52 (Zephyr), STM32WB, and Linux-based SBCs
 - **📡 Unified BLE API**: Single, consistent interface across all platforms
+- **🏗️ Multi-Service Support**: Organize your device into multiple GATT services for complex applications
 - **🔌 Easy Characteristic Management**: Simple functions to add, update, and manage BLE characteristics
-- **📊 Multiple Characteristics**: Support for up to 8 characteristics per service (configurable)
+- **📊 Multiple Characteristics**: Support for multiple services, each with multiple characteristics (configurable)
 - **🔔 Notifications & Indications**: Built-in support for BLE notifications and indications
 - **👥 Multi-Client Support**: Handle up to 4 simultaneous BLE connections (configurable)
 - **🧵 Thread-Safe Operation**: Safe concurrent access from multiple tasks/threads
@@ -154,38 +155,31 @@ git clone https://github.com/Hamas888/HMS_BLE.git
 
 ## 🚀 Quick Start
 
-### Basic BLE Peripheral
+### Basic BLE Peripheral (Single Service)
 
 ```cpp
 #include "HMS_BLE.h"
 
-HMS_BLE ble;
+// Instantiate with device name
+HMS_BLE ble("HMS_Device");
 
 void setup() {
     Serial.begin(115200);
     
-    // Initialize BLE with device name
-    HMS_BLE_Status status = ble.init("HMS_Device");
+    // Define a characteristic
+    HMS_BLE_Characteristic myChar = {
+        .uuid = "87654321-4321-4321-4321-cba987654321",
+        .name = "MyChar",
+        .properties = HMS_BLE_PROPERTY_READ_WRITE_NOTIFY
+    };
+    
+    // Add characteristic (auto-creates default service on begin)
+    ble.addCharacteristic(&myChar);
+    
+    // Initialize BLE with a specific service UUID
+    HMS_BLE_Status status = ble.begin("12345678-1234-1234-1234-123456789abc");
     if (status != HMS_BLE_STATUS_SUCCESS) {
         Serial.println("BLE initialization failed!");
-        return;
-    }
-    
-    // Add a custom service and characteristic
-    const char* serviceUUID = "12345678-1234-1234-1234-123456789abc";
-    const char* charUUID = "87654321-4321-4321-4321-cba987654321";
-    
-    ble.addCharacteristic(
-        serviceUUID,
-        charUUID,
-        HMS_BLE_PROPERTY_READ_WRITE_NOTIFY,
-        "Hello BLE"
-    );
-    
-    // Start advertising
-    status = ble.startAdvertising();
-    if (status != HMS_BLE_STATUS_SUCCESS) {
-        Serial.println("Failed to start advertising!");
         return;
     }
     
@@ -196,101 +190,56 @@ void loop() {
     // Update characteristic value every 2 seconds
     static uint32_t lastUpdate = 0;
     if (millis() - lastUpdate > 2000) {
-        ble.updateCharacteristic(0, String(millis()).c_str());
+        uint32_t uptime = millis();
+        ble.sendData("87654321-4321-4321-4321-cba987654321", (uint8_t*)&uptime, sizeof(uptime));
         lastUpdate = millis();
     }
 }
 ```
 
-### Environmental Sensor Example
+### Advanced Multi-Service Example
 
 ```cpp
 #include "HMS_BLE.h"
 
-HMS_BLE ble;
-
-// Environmental Sensing Service UUID
-const char* ENV_SERVICE_UUID = "0000181A-0000-1000-8000-00805F9B34FB";
-const char* TEMP_CHAR_UUID   = "00002A6E-0000-1000-8000-00805F9B34FB";
-const char* HUMIDITY_CHAR_UUID = "00002A6F-0000-1000-8000-00805F9B34FB";
+HMS_BLE ble("MultiService_Device");
 
 void setup() {
     Serial.begin(115200);
+
+    // 1. Define Service 1: Environmental
+    HMS_BLE_Service envService = {
+        .uuid = "0000181A-0000-1000-8000-00805F9B34FB",
+        .name = "Environment"
+    };
+    ble.addService(&envService);
+
+    // Add characteristics to Environment service
+    HMS_BLE_Characteristic tempChar = {"00002A6E-0000-1000-8000-00805F9B34FB", "Temp", HMS_BLE_PROPERTY_READ_NOTIFY};
+    ble.addCharacteristicToService(envService.uuid.c_str(), &tempChar);
+
+    // 2. Define Service 2: Device Info
+    HMS_BLE_Service infoService = {"0000180A-0000-1000-8000-00805F9B34FB", "DeviceInfo"};
+    ble.addService(&infoService);
+
+    HMS_BLE_Characteristic modelChar = {"00002A24-0000-1000-8000-00805F9B34FB", "Model", HMS_BLE_PROPERTY_READ};
+    ble.addCharacteristicToService(infoService.uuid.c_str(), &modelChar);
+
+    // 3. Initialize and Start
+    ble.begin(); 
     
-    // Initialize BLE
-    ble.init("Environmental_Sensor");
-    
-    // Add temperature characteristic
-    ble.addCharacteristic(
-        ENV_SERVICE_UUID,
-        TEMP_CHAR_UUID,
-        HMS_BLE_PROPERTY_READ_NOTIFY,
-        0.0f  // Initial temperature
-    );
-    
-    // Add humidity characteristic
-    ble.addCharacteristic(
-        ENV_SERVICE_UUID,
-        HUMIDITY_CHAR_UUID,
-        HMS_BLE_PROPERTY_READ_NOTIFY,
-        0.0f  // Initial humidity
-    );
-    
-    ble.startAdvertising();
-    Serial.println("Environmental sensor ready!");
+    // Optional: Explicitly set which services to advertise
+    const char* advServices[] = { envService.uuid.c_str() };
+    ble.setAdvertisedServices(advServices, 1);
 }
 
 void loop() {
-    static uint32_t lastReading = 0;
-    
-    if (millis() - lastReading > 5000) {
-        // Simulate sensor readings
-        float temperature = 20.0 + (random(0, 100) / 10.0);
-        float humidity = 40.0 + (random(0, 200) / 10.0);
-        
-        // Update BLE characteristics
-        ble.updateCharacteristic(0, temperature);
-        ble.updateCharacteristic(1, humidity);
-        
-        Serial.printf("Temp: %.1f°C, Humidity: %.1f%%\n", temperature, humidity);
-        lastReading = millis();
-    }
-}
-```
-
-### Multiple Characteristics
-
-```cpp
-#include "HMS_BLE.h"
-
-HMS_BLE ble;
-
-const char* SENSOR_SERVICE = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
-const char* SENSOR_1_CHAR  = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
-const char* SENSOR_2_CHAR  = "1c95d5e3-d8f7-413a-bf3d-7a2e5d7be87e";
-const char* STATUS_CHAR    = "d8de624e-140f-4a22-8594-e2216b84a5f2";
-
-void setup() {
-    Serial.begin(115200);
-    
-    ble.init("Multi_Sensor");
-    
-    // Add multiple characteristics
-    ble.addCharacteristic(SENSOR_SERVICE, SENSOR_1_CHAR, 
-                         HMS_BLE_PROPERTY_READ_NOTIFY, 0);
-    ble.addCharacteristic(SENSOR_SERVICE, SENSOR_2_CHAR, 
-                         HMS_BLE_PROPERTY_READ_NOTIFY, 0);
-    ble.addCharacteristic(SENSOR_SERVICE, STATUS_CHAR, 
-                         HMS_BLE_PROPERTY_READ_WRITE, "OK");
-    
-    ble.startAdvertising();
-}
-
-void loop() {
-    // Update multiple sensors
-    ble.updateCharacteristic(0, analogRead(A0));
-    ble.updateCharacteristic(1, analogRead(A1));
-    delay(1000);
+    float temp = 24.5f;
+    // Send data to specific service/characteristic
+    ble.sendDataToService("0000181A-0000-1000-8000-00805F9B34FB", 
+                         "00002A6E-0000-1000-8000-00805F9B34FB", 
+                         (uint8_t*)&temp, sizeof(temp));
+    delay(5000);
 }
 ```
 
@@ -335,8 +284,9 @@ Configure HMS_BLE by defining these macros before including the header:
 
 ```cpp
 // === Core BLE Configuration ===
+#define HMS_BLE_MAX_SERVICES 4                  // Max number of services (default: 4)
+#define HMS_BLE_MAX_CHARACTERISTICS_PER_SERVICE 8 // Max characteristics per service (default: 8)
 #define HMS_BLE_MAX_DATA_LENGTH 32              // Max data length for characteristics (default: 32)
-#define HMS_BLE_MAX_CHARACTERISTICS 8           // Max number of characteristics (default: 8)
 #define HMS_BLE_MAX_CLIENTS 4                   // Max simultaneous connections (default: 4)
 
 // === Background Processing ===
@@ -354,19 +304,18 @@ Configure HMS_BLE by defining these macros before including the header:
 
 #### Minimal Configuration (Memory Constrained)
 ```cpp
+#define HMS_BLE_MAX_SERVICES 1                  // Single service only
+#define HMS_BLE_MAX_CHARACTERISTICS_PER_SERVICE 4 
 #define HMS_BLE_MAX_DATA_LENGTH 20              // Smaller data packets
-#define HMS_BLE_MAX_CHARACTERISTICS 4           // Fewer characteristics
 #define HMS_BLE_MAX_CLIENTS 1                   // Single client only
-#define HMS_BLE_DEBUG 0                         // Disable debug logging
 ```
 
 #### Full-Featured Configuration
 ```cpp
+#define HMS_BLE_MAX_SERVICES 8                  // More services
+#define HMS_BLE_MAX_CHARACTERISTICS_PER_SERVICE 10
 #define HMS_BLE_MAX_DATA_LENGTH 64              // Larger data packets
-#define HMS_BLE_MAX_CHARACTERISTICS 16          // More characteristics
 #define HMS_BLE_MAX_CLIENTS 8                   // Multi-client support
-#define HMS_BLE_DEBUG 1                         // Enable debugging
-#define HMS_BLE_LOG_LEVEL CHRONOLOG_LEVEL_DEBUG
 ```
 
 ### BLE Property Flags
@@ -380,6 +329,37 @@ HMS_BLE_PROPERTY_BROADCAST      // Broadcast characteristic
 HMS_BLE_PROPERTY_READ_WRITE     // Read and write
 HMS_BLE_PROPERTY_READ_NOTIFY    // Read with notifications
 HMS_BLE_PROPERTY_WRITE_NOTIFY   // Write with notifications
+```
+
+### Callbacks API
+
+HMS_BLE uses functional callbacks for handling BLE events. All callbacks now include the `serviceUUID` to support multi-service architectures.
+
+```cpp
+// 1. Connection Callback
+ble.setConnectionCallback([](bool connected, const uint8_t* mac) {
+    Serial.printf("Client %s: %02X:%02X:%02X:%02X:%02X:%02X\n", 
+                 connected ? "Connected" : "Disconnected",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+});
+
+// 2. Write Callback (Data received from client)
+ble.setWriteCallback([](const char* svcUUID, const char* charUUID, const uint8_t* data, size_t len, const uint8_t* mac) {
+    Serial.printf("Write on %s/%s: %d bytes received\n", svcUUID, charUUID, len);
+});
+
+// 3. Read Callback (Client requested data)
+ble.setReadCallback([](const char* svcUUID, const char* charUUID, uint8_t* data, size_t* len, const uint8_t* mac) {
+    // Fill 'data' and set '*len'
+    const char* response = "HelloClient";
+    memcpy(data, response, strlen(response));
+    *len = strlen(response);
+});
+
+// 4. Notify Callback (Client subscribed/unsubscribed)
+ble.setNotifyCallback([](const char* svcUUID, const char* charUUID, bool enabled, const uint8_t* mac) {
+    Serial.printf("Notifications %s on %s/%s\n", enabled ? "ENABLED" : "DISABLED", svcUUID, charUUID);
+});
 ```
 
 ## 🛠️ Platform-Specific Requirements
@@ -534,8 +514,10 @@ HMS_BLE is actively developed with exciting features planned for upcoming releas
 ### ✅ Currently Supported
 - **ESP32 (Arduino)**: Full support for ESP32 family with NimBLE
 - **nRF52 (Zephyr)**: Complete implementation for nRF Connect SDK
-- **Multi-Characteristic**: Support for multiple services and characteristics
-- **Notifications**: BLE notification and indication support
+- **Multi-Service Architecture**: Organize characteristics into up to 4 services
+- **Multi-Characteristic**: Support for multiple characteristics per service (up to 8)
+- **Notifications & Indications**: Full BLE notification and indication support
+- **Manufacturer Data**: Support for setting custom manufacturer data in advertising packets
 
 ### 🔜 Next Major Platforms (Q1-Q2 2026)
 - **🔷 STM32WB Series**: Full support for STM32WB55/WB35 with STM32Cube HAL

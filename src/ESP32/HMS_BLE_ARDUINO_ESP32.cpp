@@ -19,33 +19,49 @@ HMS_BLE_Status HMS_BLE::init() {
     }
 
     bleServer->setCallbacks(new BLEConnectionStatus(instance));
-    bleService = bleServer->createService(NimBLEUUID(serviceUUID));
-    if(!bleService) {
-        BLE_LOGGER(error, "Failed to create BLE service");
-        return HMS_BLE_STATUS_ERROR_INIT;
-    }
-
-    for(size_t i = 0; i < characteristicCount; i++) {
-        NimBLECharacteristic* pChar = bleService->createCharacteristic(
-            BLEUUID(characteristics[i].uuid.c_str()),
-            static_cast<uint32_t>(characteristics[i].properties)
-        );
-
-        if(!pChar) {
-            BLE_LOGGER(error, "Failed to create characteristic: %s", characteristics[i].uuid.c_str());
+    
+    // Create all registered services
+    for(size_t s = 0; s < serviceCount; s++) {
+        NimBLEService* pService = bleServer->createService(NimBLEUUID(services[s].service.uuid.c_str()));
+        if(!pService) {
+            BLE_LOGGER(error, "Failed to create BLE service: %s", services[s].service.uuid.c_str());
             return HMS_BLE_STATUS_ERROR_INIT;
         }
+        services[s].bleService = pService;
+        
+        BLE_LOGGER(debug, "Created service: %s (%s)", 
+            services[s].service.uuid.c_str(), services[s].service.name.c_str()
+        );
+        
+        // Create characteristics for this service
+        for(size_t c = 0; c < services[s].characteristicCount; c++) {
+            NimBLECharacteristic* pChar = pService->createCharacteristic(
+                BLEUUID(services[s].characteristics[c].uuid.c_str()),
+                static_cast<uint32_t>(services[s].characteristics[c].properties)
+            );
 
-        pChar->setCallbacks(new BLEData(instance, characteristics[i].uuid.c_str()));
-        bleCharacteristics[i] = pChar;
+            if(!pChar) {
+                BLE_LOGGER(error, "Failed to create characteristic: %s", services[s].characteristics[c].uuid.c_str());
+                return HMS_BLE_STATUS_ERROR_INIT;
+            }
 
+            // Pass service UUID, char UUID, and indices to callback
+            pChar->setCallbacks(new BLEData(instance, 
+                services[s].service.uuid.c_str(),
+                services[s].characteristics[c].uuid.c_str(),
+                s, c));
+            services[s].bleCharacteristics[c] = pChar;
 
-        BLE_LOGGER(debug, "Created characteristic: %s (%s)", 
-            characteristics[i].uuid.c_str(), characteristics[i].name.c_str()
+            BLE_LOGGER(debug, "  Created characteristic: %s (%s)", 
+                services[s].characteristics[c].uuid.c_str(), services[s].characteristics[c].name.c_str()
+            );
+        }
+        
+        pService->start();
+        BLE_LOGGER(debug, "Started service: %s with %d characteristics", 
+            services[s].service.uuid.c_str(), services[s].characteristicCount
         );
     }
-
-    bleService->start();
 
     NimBLEAdvertising* pAdvertising = NimBLEDevice::getAdvertising();
     if(!pAdvertising) {
@@ -54,7 +70,24 @@ HMS_BLE_Status HMS_BLE::init() {
     }
 
     pAdvertising->setName(deviceName);
-    pAdvertising->addServiceUUID(NimBLEUUID(serviceUUID));
+    
+    // Add service UUIDs to advertising
+    if(advertisedServiceCount > 0) {
+        // User specified which services to advertise
+        for(size_t i = 0; i < advertisedServiceCount; i++) {
+            int svcIdx = findServiceIndex(advertisedServices[i]);
+            if(svcIdx >= 0) {
+                pAdvertising->addServiceUUID(NimBLEUUID(services[svcIdx].service.uuid.c_str()));
+                BLE_LOGGER(debug, "Advertising service: %s", services[svcIdx].service.uuid.c_str());
+            }
+        }
+    } else {
+        // Advertise first service by default (BLE advertising has limited space)
+        if(serviceCount > 0) {
+            pAdvertising->addServiceUUID(NimBLEUUID(services[0].service.uuid.c_str()));
+            BLE_LOGGER(debug, "Advertising primary service: %s", services[0].service.uuid.c_str());
+        }
+    }
 
     if(manufacturerDataSet) {
         std::string mfgDataStr;
@@ -108,8 +141,18 @@ const uint8_t* HMS_BLE::getMacAddressBytes(const NimBLEAddress& address) {
     return addrBase->val;
 }
 
-HMS_BLE_Status HMS_BLE::sendDataInternal(int charIndex, const uint8_t* data, size_t length) {
-    NimBLECharacteristic* pChar = static_cast<NimBLECharacteristic*>(bleCharacteristics[charIndex]);
+HMS_BLE_Status HMS_BLE::sendDataInternal(int serviceIndex, int charIndex, const uint8_t* data, size_t length) {
+    if(serviceIndex < 0 || serviceIndex >= (int)serviceCount) {
+        BLE_LOGGER(error, "Invalid service index: %d", serviceIndex);
+        return HMS_BLE_STATUS_ERROR_INVALID_CHAR;
+    }
+    
+    if(charIndex < 0 || charIndex >= (int)services[serviceIndex].characteristicCount) {
+        BLE_LOGGER(error, "Invalid characteristic index: %d for service %d", charIndex, serviceIndex);
+        return HMS_BLE_STATUS_ERROR_INVALID_CHAR;
+    }
+    
+    NimBLECharacteristic* pChar = services[serviceIndex].bleCharacteristics[charIndex];
     if(!pChar) {
         BLE_LOGGER(error, "BLE characteristic pointer is null");
         return HMS_BLE_STATUS_ERROR_SEND;
@@ -118,11 +161,25 @@ HMS_BLE_Status HMS_BLE::sendDataInternal(int charIndex, const uint8_t* data, siz
     pChar->setValue((uint8_t*)data, length);
     
     if(bleServer && bleServer->getConnectedCount() > 0) {
-        return pChar->notify() ? HMS_BLE_STATUS_SUCCESS : HMS_BLE_STATUS_ERROR_SEND;
-
-        BLE_LOGGER(debug, "Notification sent on %s: %d bytes to %d client(s)", 
-            pChar->getUUID().toString().c_str(), length, bleServer->getConnectedCount()
-        );
+        // Check if any client has subscribed to notifications for this characteristic
+        int subscribedCount = 0;
+        for(int i = 0; i < HMS_BLE_MAX_CLIENTS; i++) {
+            if(services[serviceIndex].notificationEnabled[charIndex][i]) {
+                subscribedCount++;
+            }
+        }
+        
+        if(subscribedCount > 0) {
+            bool result = pChar->notify();
+            BLE_LOGGER(debug, "Notification sent on %s: %d bytes to %d client(s)", 
+                pChar->getUUID().toString().c_str(), length, subscribedCount
+            );
+            return result ? HMS_BLE_STATUS_SUCCESS : HMS_BLE_STATUS_ERROR_SEND;
+        } else {
+            BLE_LOGGER(debug, "No clients subscribed to %s, skipping notification", 
+                pChar->getUUID().toString().c_str());
+            return HMS_BLE_STATUS_SUCCESS;
+        }
     } else {
         BLE_LOGGER(warn, "No connected clients to notify for %s", pChar->getUUID().toString().c_str());
         return HMS_BLE_STATUS_ERROR_NOT_CONNECTED;
@@ -142,13 +199,13 @@ void HMS_BLE::BLEConnectionStatus::onConnect(NimBLEServer* pServer, NimBLEConnIn
 
 void HMS_BLE::BLEData::onRead(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& connInfo) {
     if(!hms_ble) return;
-    BLE_LOGGER(debug, "Read on characteristic: %s", charUUID);
+    BLE_LOGGER(debug, "Read on service %s, characteristic: %s", serviceUUID, charUUID);
     
     if(hms_ble->readCallback) {
         uint8_t readData[HMS_BLE_MAX_DATA_LENGTH] = {0};
         size_t readLength = 0;
         const uint8_t* macBytes = getMacAddressBytes(connInfo.getAddress());
-        hms_ble->readCallback(charUUID, readData, &readLength, macBytes);
+        hms_ble->readCallback(serviceUUID, charUUID, readData, &readLength, macBytes);
         if(readLength > 0 && readLength <= HMS_BLE_MAX_DATA_LENGTH) {
             pCharacteristic->setValue(readData, readLength);
         }
@@ -158,28 +215,41 @@ void HMS_BLE::BLEData::onRead(NimBLECharacteristic* pCharacteristic, NimBLEConnI
 void HMS_BLE::BLEData::onWrite(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& connInfo) {
     if(!hms_ble) return;
     std::string rxValue = pCharacteristic->getValue();
+    
+    // Store in per-service buffer
+    if(serviceIndex >= 0 && serviceIndex < HMS_BLE_MAX_SERVICES) {
+        memcpy(hms_ble->services[serviceIndex].data, rxValue.data(), 
+            std::min(rxValue.length(), (size_t)HMS_BLE_MAX_DATA_LENGTH - 1));
+        hms_ble->services[serviceIndex].dataLength = std::min(rxValue.length(), (size_t)HMS_BLE_MAX_DATA_LENGTH - 1);
+        hms_ble->services[serviceIndex].data[hms_ble->services[serviceIndex].dataLength] = 0;
+        hms_ble->services[serviceIndex].received = true;
+    }
+    
+    // Also store in legacy shared buffer for backward compatibility
     memcpy(hms_ble->data, rxValue.data(), std::min(rxValue.length(), (size_t)HMS_BLE_MAX_DATA_LENGTH - 1));
     hms_ble->dataLength = std::min(rxValue.length(), (size_t)HMS_BLE_MAX_DATA_LENGTH - 1);
     hms_ble->data[hms_ble->dataLength] = 0;
     hms_ble->received = true;
 
-    BLE_LOGGER(debug, "Write on characteristic: %s (%d bytes)", charUUID, hms_ble->dataLength);
+    BLE_LOGGER(debug, "Write on service %s, characteristic: %s (%d bytes)", serviceUUID, charUUID, hms_ble->dataLength);
 
     if(hms_ble->writeCallback) {
         const uint8_t* macBytes = getMacAddressBytes(connInfo.getAddress());
-        hms_ble->writeCallback(charUUID, hms_ble->data, hms_ble->dataLength, macBytes);
+        hms_ble->writeCallback(serviceUUID, charUUID, hms_ble->data, hms_ble->dataLength, macBytes);
     }
 }
 
 void HMS_BLE::BLEConnectionStatus::onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo, int reason) {
     if(!hms_ble) return;
     
-    // Clear subscription data for this client
-    uint16_t connHandle = connInfo.getConnHandle();                                                                             // Get the connection handle and map it to a client index
-    uint8_t clientIndex = connHandle % HMS_BLE_MAX_CLIENTS;                                                                     // Map connection handle to client index
+    // Clear subscription data for this client across all services
+    uint16_t connHandle = connInfo.getConnHandle();
+    uint8_t clientIndex = connHandle % HMS_BLE_MAX_CLIENTS;
     
-    for(int i = 0; i < HMS_BLE_MAX_CHARACTERISTICS; i++) {
-        hms_ble->notificationEnabled[i][clientIndex] = false;
+    for(size_t s = 0; s < hms_ble->serviceCount; s++) {
+        for(size_t c = 0; c < hms_ble->services[s].characteristicCount; c++) {
+            hms_ble->services[s].notificationEnabled[c][clientIndex] = false;
+        }
     }
     
     hms_ble->bleConnected = false;
@@ -197,27 +267,26 @@ void HMS_BLE::BLEConnectionStatus::onDisconnect(NimBLEServer* pServer, NimBLECon
 void HMS_BLE::BLEData::onSubscribe(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& connInfo, uint16_t subValue) {
     if(!hms_ble) return;
     
-    int charIndex = hms_ble->findCharacteristicIndex(charUUID);
-    if(charIndex == -1) {
-        BLE_LOGGER(error, "Characteristic %s not found in subscription callback", charUUID);
+    if(serviceIndex < 0 || serviceIndex >= HMS_BLE_MAX_SERVICES ||
+       charIndex < 0 || charIndex >= HMS_BLE_MAX_CHARACTERISTICS_PER_SERVICE) {
+        BLE_LOGGER(error, "Invalid indices in subscription callback (svc=%d, char=%d)", serviceIndex, charIndex);
         return;
     }
 
-    uint16_t connHandle = connInfo.getConnHandle();                                                                             // Get the connection handle and map it to a client index
-    uint8_t clientIndex = connHandle % HMS_BLE_MAX_CLIENTS;                                                                     // Map connection handle to client index
+    uint16_t connHandle = connInfo.getConnHandle();
+    uint8_t clientIndex = connHandle % HMS_BLE_MAX_CLIENTS;
     
-    // subValue contains the CCCD value (0x0000=disabled, 0x0001=notify, 0x0002=indicate)
-    bool notificationsEnabled = (subValue & 0x0001) != 0;                                                                       // Check if notify bit is set
+    bool notificationsEnabled = (subValue & 0x0001) != 0;
     
-    hms_ble->notificationEnabled[charIndex][clientIndex] = notificationsEnabled;                                                // Track notification subscription for this client and characteristic
+    hms_ble->services[serviceIndex].notificationEnabled[charIndex][clientIndex] = notificationsEnabled;
     
-    BLE_LOGGER(debug, "Subscription changed on %s (client %d): %s", 
-        charUUID, clientIndex, notificationsEnabled ? "ENABLED" : "DISABLED"
+    BLE_LOGGER(debug, "Subscription changed on service %s, char %s (client %d): %s", 
+        serviceUUID, charUUID, clientIndex, notificationsEnabled ? "ENABLED" : "DISABLED"
     );
 
     if(hms_ble->notifyCallback) {
         const uint8_t* macBytes = getMacAddressBytes(connInfo.getAddress());
-        hms_ble->notifyCallback(charUUID, notificationsEnabled, macBytes);
+        hms_ble->notifyCallback(serviceUUID, charUUID, notificationsEnabled, macBytes);
     }
 }
 #endif
