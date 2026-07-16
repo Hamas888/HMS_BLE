@@ -484,6 +484,7 @@ class HMS_BLE {
       HMS_BLE_Status               bluezRegisterApp();
       void                         bluezCleanupApp();
       void                         uuidStringToBytes(const char *uuidStr, uint8_t bytes[16]);
+      bool                         mapGlobalCharIdx(int globalCharIdx, int* svcIdx, int* localIdx) const;
 
       // D-Bus vtable callbacks (static, routes via instance pointer)
       static int                   bluezMessageHandler(sd_bus_message *m, void *userdata, sd_bus_error *retError);

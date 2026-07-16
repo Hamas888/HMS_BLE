@@ -22,22 +22,6 @@
 #define DBUS_OBJECT_MANAGER         "org.freedesktop.DBus.ObjectManager"
 
 // ==========================================================================
-// Helper: map globalCharIdx → (svcIdx, localIdx)
-// ==========================================================================
-static bool globalCharToLocal(int globalCharIdx, int* svcIdx, int* localIdx) {
-    HMS_BLE* ble = HMS_BLE::instance;
-    if (!ble) return false;
-    int acc = 0;
-    for (size_t s = 0; s < ble->getServiceCount(); s++) {
-        for (size_t c = 0; c < ble->services[s].characteristicCount; c++) {
-            if (acc == globalCharIdx) { *svcIdx = (int)s; *localIdx = (int)c; return true; }
-            acc++;
-        }
-    }
-    return false;
-}
-
-// ==========================================================================
 // UUID conversion: hex-string to 16-byte little-endian (BlueZ D-Bus order)
 // ==========================================================================
 void HMS_BLE::uuidStringToBytes(const char* uuidStr, uint8_t bytes[16]) {
@@ -84,10 +68,9 @@ int HMS_BLE::bluezServiceGetUUID(sd_bus *bus, const char *path, const char *ifac
                                   void *userdata, sd_bus_error *retError) {
     (void)bus; (void)path; (void)iface; (void)prop; (void)retError;
     int svcIdx = (int)(intptr_t)userdata;
-    HMS_BLE* ble = HMS_BLE::instance;
-    if (!ble || svcIdx < 0 || (size_t)svcIdx >= ble->getServiceCount())
+    if (!instance || svcIdx < 0 || (size_t)svcIdx >= instance->serviceCount)
         return sd_bus_reply_method_errorf(reply, "org.bluez.Error.Invalid", "Invalid service index");
-    return sd_bus_message_append(reply, "s", ble->services[svcIdx].service.uuid.c_str());
+    return sd_bus_message_append(reply, "s", instance->services[svcIdx].service.uuid.c_str());
 }
 
 int HMS_BLE::bluezServiceGetPrimary(sd_bus *bus, const char *path, const char *iface,
@@ -99,8 +82,8 @@ int HMS_BLE::bluezServiceGetPrimary(sd_bus *bus, const char *path, const char *i
 
 static const sd_bus_vtable bluez_service_vtable[] = {
     SD_BUS_VTABLE_START(0),
-    SD_BUS_VTABLE_PROPERTY("UUID",    "s", HMS_BLE::bluezServiceGetUUID,    0, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
-    SD_BUS_VTABLE_PROPERTY("Primary", "b", HMS_BLE::bluezServiceGetPrimary, 0, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_PROPERTY("UUID",    "s", HMS_BLE::bluezServiceGetUUID,    NULL, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_PROPERTY("Primary", "b", HMS_BLE::bluezServiceGetPrimary, NULL, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
     SD_BUS_VTABLE_END
 };
 
@@ -111,8 +94,9 @@ int HMS_BLE::bluezCharGetUUID(sd_bus *bus, const char *path, const char *iface,
                                const char *prop, sd_bus_message *reply,
                                void *userdata, sd_bus_error *retError) {
     (void)bus; (void)path; (void)iface; (void)prop; (void)retError;
+    int gcidx = (int)(intptr_t)userdata;
     int svcIdx, localIdx;
-    if (!globalCharToLocal((int)(intptr_t)userdata, &svcIdx, &localIdx))
+    if (!instance || !instance->mapGlobalCharIdx(gcidx, &svcIdx, &localIdx))
         return sd_bus_reply_method_errorf(reply, "org.bluez.Error.Invalid", "");
     return sd_bus_message_append(reply, "s", instance->services[svcIdx].characteristics[localIdx].uuid.c_str());
 }
@@ -121,8 +105,9 @@ int HMS_BLE::bluezCharGetService(sd_bus *bus, const char *path, const char *ifac
                                   const char *prop, sd_bus_message *reply,
                                   void *userdata, sd_bus_error *retError) {
     (void)bus; (void)path; (void)iface; (void)prop; (void)retError;
+    int gcidx = (int)(intptr_t)userdata;
     int svcIdx, localIdx;
-    if (!globalCharToLocal((int)(intptr_t)userdata, &svcIdx, &localIdx))
+    if (!instance || !instance->mapGlobalCharIdx(gcidx, &svcIdx, &localIdx))
         return sd_bus_reply_method_errorf(reply, "org.bluez.Error.Invalid", "");
     char svcPath[64];
     snprintf(svcPath, sizeof(svcPath), "/com/hmsble/app/service%d", svcIdx);
@@ -133,8 +118,9 @@ int HMS_BLE::bluezCharGetValue(sd_bus *bus, const char *path, const char *iface,
                                 const char *prop, sd_bus_message *reply,
                                 void *userdata, sd_bus_error *retError) {
     (void)bus; (void)path; (void)iface; (void)prop; (void)retError;
+    int gcidx = (int)(intptr_t)userdata;
     int svcIdx, localIdx;
-    if (!globalCharToLocal((int)(intptr_t)userdata, &svcIdx, &localIdx))
+    if (!instance || !instance->mapGlobalCharIdx(gcidx, &svcIdx, &localIdx))
         return sd_bus_reply_method_errorf(reply, "org.bluez.Error.Invalid", "");
     return sd_bus_message_append(reply, "ay",
                                  instance->services[svcIdx].data, instance->services[svcIdx].dataLength);
@@ -144,8 +130,9 @@ int HMS_BLE::bluezCharGetFlags(sd_bus *bus, const char *path, const char *iface,
                                 const char *prop, sd_bus_message *reply,
                                 void *userdata, sd_bus_error *retError) {
     (void)bus; (void)path; (void)iface; (void)prop; (void)retError;
+    int gcidx = (int)(intptr_t)userdata;
     int svcIdx, localIdx;
-    if (!globalCharToLocal((int)(intptr_t)userdata, &svcIdx, &localIdx))
+    if (!instance || !instance->mapGlobalCharIdx(gcidx, &svcIdx, &localIdx))
         return sd_bus_reply_method_errorf(reply, "org.bluez.Error.Invalid", "");
     uint32_t props = static_cast<uint32_t>(instance->services[svcIdx].characteristics[localIdx].properties);
     int r = sd_bus_message_open_container(reply, SD_BUS_TYPE_ARRAY, "s");
@@ -164,7 +151,7 @@ int HMS_BLE::bluezCharGetNotifying(sd_bus *bus, const char *path, const char *if
     (void)bus; (void)path; (void)iface; (void)prop; (void)retError;
     int globalCharIdx = (int)(intptr_t)userdata;
     return sd_bus_message_append(reply, "b",
-        (globalCharIdx >= 0 && globalCharIdx < HMS_BLE_MAX_CHARACTERISTICS)
+        (instance && globalCharIdx >= 0 && globalCharIdx < HMS_BLE_MAX_CHARACTERISTICS)
         ? (int)instance->bluezNotifEnabled[globalCharIdx] : 0);
 }
 
@@ -173,9 +160,9 @@ int HMS_BLE::bluezCharGetNotifying(sd_bus *bus, const char *path, const char *if
 // ==========================================================================
 int HMS_BLE::bluezCharMethodReadValue(sd_bus_message* m, void* userdata, sd_bus_error* retError) {
     (void)retError;
-    int globalCharIdx = (int)(intptr_t)userdata;
+    int gcidx = (int)(intptr_t)userdata;
     int svcIdx, localIdx;
-    if (!globalCharToLocal(globalCharIdx, &svcIdx, &localIdx))
+    if (!instance || !instance->mapGlobalCharIdx(gcidx, &svcIdx, &localIdx))
         return sd_bus_reply_method_errorf(m, "org.bluez.Error.Failed", "Characteristic not found");
 
     if (instance->readCallback) {
@@ -198,9 +185,9 @@ int HMS_BLE::bluezCharMethodReadValue(sd_bus_message* m, void* userdata, sd_bus_
 
 int HMS_BLE::bluezCharMethodWriteValue(sd_bus_message* m, void* userdata, sd_bus_error* retError) {
     (void)retError;
-    int globalCharIdx = (int)(intptr_t)userdata;
+    int gcidx = (int)(intptr_t)userdata;
     int svcIdx, localIdx;
-    if (!globalCharToLocal(globalCharIdx, &svcIdx, &localIdx))
+    if (!instance || !instance->mapGlobalCharIdx(gcidx, &svcIdx, &localIdx))
         return sd_bus_reply_method_errorf(m, "org.bluez.Error.Failed", "Characteristic not found");
 
     const void* buf = nullptr;
@@ -229,9 +216,9 @@ int HMS_BLE::bluezCharMethodWriteValue(sd_bus_message* m, void* userdata, sd_bus
     }
 
     // Emit PropertiesChanged for Value
-    const char* changedProps[] = { "Value", NULL };
+    char* changedProps[] = { (char*)"Value", NULL };
     sd_bus_emit_properties_changed_strv(instance->bluezBus,
-        instance->bluezCharPaths[globalCharIdx].c_str(),
+        instance->bluezCharPaths[gcidx].c_str(),
         BLUEZ_GATT_CHARACTERISTIC1, changedProps);
 
     return sd_bus_reply_method_return(m, "");
@@ -239,12 +226,12 @@ int HMS_BLE::bluezCharMethodWriteValue(sd_bus_message* m, void* userdata, sd_bus
 
 int HMS_BLE::bluezCharMethodStartNotify(sd_bus_message* m, void* userdata, sd_bus_error* retError) {
     (void)retError;
-    int globalCharIdx = (int)(intptr_t)userdata;
+    int gcidx = (int)(intptr_t)userdata;
     int svcIdx, localIdx;
-    if (!globalCharToLocal(globalCharIdx, &svcIdx, &localIdx))
+    if (!instance || !instance->mapGlobalCharIdx(gcidx, &svcIdx, &localIdx))
         return sd_bus_reply_method_errorf(m, "org.bluez.Error.Failed", "Not found");
 
-    instance->bluezNotifEnabled[globalCharIdx] = true;
+    instance->bluezNotifEnabled[gcidx] = true;
     BLE_LOGGER(info, "Notifications enabled for svc %d char %d", svcIdx, localIdx);
 
     if (instance->notifyCallback) {
@@ -258,12 +245,12 @@ int HMS_BLE::bluezCharMethodStartNotify(sd_bus_message* m, void* userdata, sd_bu
 
 int HMS_BLE::bluezCharMethodStopNotify(sd_bus_message* m, void* userdata, sd_bus_error* retError) {
     (void)retError;
-    int globalCharIdx = (int)(intptr_t)userdata;
+    int gcidx = (int)(intptr_t)userdata;
     int svcIdx, localIdx;
-    if (!globalCharToLocal(globalCharIdx, &svcIdx, &localIdx))
+    if (!instance || !instance->mapGlobalCharIdx(gcidx, &svcIdx, &localIdx))
         return sd_bus_reply_method_errorf(m, "org.bluez.Error.Failed", "Not found");
 
-    instance->bluezNotifEnabled[globalCharIdx] = false;
+    instance->bluezNotifEnabled[gcidx] = false;
     BLE_LOGGER(info, "Notifications disabled for svc %d char %d", svcIdx, localIdx);
 
     if (instance->notifyCallback) {
@@ -277,15 +264,15 @@ int HMS_BLE::bluezCharMethodStopNotify(sd_bus_message* m, void* userdata, sd_bus
 
 static const sd_bus_vtable bluez_char_vtable[] = {
     SD_BUS_VTABLE_START(0),
-    SD_BUS_VTABLE_PROPERTY("UUID",      "s",   HMS_BLE::bluezCharGetUUID,      0, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
-    SD_BUS_VTABLE_PROPERTY("Service",   "o",   HMS_BLE::bluezCharGetService,   0, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
-    SD_BUS_VTABLE_PROPERTY("Value",     "ay",  HMS_BLE::bluezCharGetValue,     0, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
-    SD_BUS_VTABLE_PROPERTY("Flags",     "as",  HMS_BLE::bluezCharGetFlags,     0, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
-    SD_BUS_VTABLE_PROPERTY("Notifying", "b",   HMS_BLE::bluezCharGetNotifying, 0, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
-    SD_BUS_VTABLE_METHOD("ReadValue",   "a{sv}", "ay", HMS_BLE::bluezCharMethodReadValue,  SD_BUS_VTABLE_UNPRIVILEGED),
-    SD_BUS_VTABLE_METHOD("WriteValue",  "aya{sv}", "",  HMS_BLE::bluezCharMethodWriteValue, SD_BUS_VTABLE_UNPRIVILEGED),
-    SD_BUS_VTABLE_METHOD("StartNotify", "", "",          HMS_BLE::bluezCharMethodStartNotify, SD_BUS_VTABLE_UNPRIVILEGED),
-    SD_BUS_VTABLE_METHOD("StopNotify",  "", "",          HMS_BLE::bluezCharMethodStopNotify,  SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_PROPERTY("UUID",      "s",   HMS_BLE::bluezCharGetUUID,      NULL, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_PROPERTY("Service",   "o",   HMS_BLE::bluezCharGetService,   NULL, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_PROPERTY("Value",     "ay",  HMS_BLE::bluezCharGetValue,     NULL, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_PROPERTY("Flags",     "as",  HMS_BLE::bluezCharGetFlags,     NULL, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_PROPERTY("Notifying", "b",   HMS_BLE::bluezCharGetNotifying, NULL, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_METHOD("ReadValue",   "a{sv}", "ay", HMS_BLE::bluezCharMethodReadValue,  SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("WriteValue",  "aya{sv}", "",  HMS_BLE::bluezCharMethodWriteValue, SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("StartNotify", "", "",          HMS_BLE::bluezCharMethodStartNotify, SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("StopNotify",  "", "",          HMS_BLE::bluezCharMethodStopNotify,  SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_VTABLE_END
 };
 
@@ -308,7 +295,7 @@ int HMS_BLE::bluezAdvGetServiceUUIDs(sd_bus *bus, const char *path, const char *
     if (r < 0) return r;
     if (instance) {
         size_t advCount = (instance->advertisedServiceCount > 0)
-            ? instance->advertisedServiceCount : instance->getServiceCount();
+            ? instance->advertisedServiceCount : instance->serviceCount;
         for (size_t i = 0; i < advCount; i++) {
             const char* uuid = (instance->advertisedServiceCount > 0)
                 ? instance->advertisedServices[i]
@@ -342,13 +329,27 @@ int HMS_BLE::bluezAdvMethodRelease(sd_bus_message* m, void* userdata, sd_bus_err
 
 static const sd_bus_vtable bluez_adv_vtable[] = {
     SD_BUS_VTABLE_START(0),
-    SD_BUS_VTABLE_PROPERTY("Type",          "s",  HMS_BLE::bluezAdvGetType,          0, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
-    SD_BUS_VTABLE_PROPERTY("ServiceUUIDs",  "as", HMS_BLE::bluezAdvGetServiceUUIDs,  0, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
-    SD_BUS_VTABLE_PROPERTY("LocalName",     "s",  HMS_BLE::bluezAdvGetLocalName,     0, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
-    SD_BUS_VTABLE_PROPERTY("Discoverable",  "b",  HMS_BLE::bluezAdvGetDiscoverable,  0, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
-    SD_BUS_VTABLE_METHOD("Release", "", "", HMS_BLE::bluezAdvMethodRelease, SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_PROPERTY("Type",          "s",  HMS_BLE::bluezAdvGetType,          NULL, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_PROPERTY("ServiceUUIDs",  "as", HMS_BLE::bluezAdvGetServiceUUIDs,  NULL, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_PROPERTY("LocalName",     "s",  HMS_BLE::bluezAdvGetLocalName,     NULL, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_PROPERTY("Discoverable",  "b",  HMS_BLE::bluezAdvGetDiscoverable,  NULL, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_METHOD("Release", "", "", HMS_BLE::bluezAdvMethodRelease, SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_VTABLE_END
 };
+
+// ==========================================================================
+// Helper (member): map globalCharIdx → (svcIdx, localIdx)
+// ==========================================================================
+bool HMS_BLE::mapGlobalCharIdx(int globalCharIdx, int* svcIdx, int* localIdx) const {
+    int acc = 0;
+    for (size_t s = 0; s < serviceCount; s++) {
+        for (size_t c = 0; c < services[s].characteristicCount; c++) {
+            if (acc == globalCharIdx) { *svcIdx = (int)s; *localIdx = (int)c; return true; }
+            acc++;
+        }
+    }
+    return false;
+}
 
 // ==========================================================================
 // BlueZ implementation: init()
@@ -368,7 +369,7 @@ HMS_BLE_Status HMS_BLE::init() {
 
     // 3. Find BlueZ adapter
     r = bluezSetupAdapter();
-    if (r != HMS_BLE_STATUS_SUCCESS) { sd_bus_unref(bluezBus); bluezBus = nullptr; return r; }
+    if (r != HMS_BLE_STATUS_SUCCESS) { sd_bus_unref(bluezBus); bluezBus = nullptr; return (HMS_BLE_Status)r; }
 
     // ---- Beacon mode ----
     if (bleMode == HMS_BLE_MODE_BEACON) {
@@ -378,7 +379,7 @@ HMS_BLE_Status HMS_BLE::init() {
 
     // 4. Register GATT services
     r = bluezRegisterApp();
-    if (r != HMS_BLE_STATUS_SUCCESS) { sd_bus_unref(bluezBus); bluezBus = nullptr; return r; }
+    if (r != HMS_BLE_STATUS_SUCCESS) { sd_bus_unref(bluezBus); bluezBus = nullptr; return (HMS_BLE_Status)r; }
 
     // 5. Start advertising
     restartAdvertising();
@@ -513,7 +514,6 @@ HMS_BLE_Status HMS_BLE::bluezRegisterApp() {
                            "oa{sv}", bluezAppPath, 0);
     if (r < 0) {
         BLE_LOGGER(error, "RegisterApplication failed. Ensure: btmgmt le on");
-        // Non-fatal — try to work with advertising only
     }
 
     BLE_LOGGER(info, "GATT app registered (%d chars, %d services)",
@@ -578,13 +578,11 @@ HMS_BLE_Status HMS_BLE::sendDataInternal(int serviceIndex, int charIndex,
     const std::string& charPath = bluezCharPaths[globalCharIdx];
     if (charPath.empty()) return HMS_BLE_STATUS_ERROR_INVALID_CHAR;
 
-    // Write to data buffer for property getter to return
     size_t copyLen = length > HMS_BLE_MAX_DATA_LENGTH ? HMS_BLE_MAX_DATA_LENGTH : length;
     memcpy(services[serviceIndex].data, data, copyLen);
     services[serviceIndex].dataLength = copyLen;
 
-    // Emit PropertiesChanged — BlueZ notifies subscribed clients
-    const char* changedProps[] = { "Value", NULL };
+    char* changedProps[] = { (char*)"Value", NULL };
     sd_bus_emit_properties_changed_strv(bluezBus, charPath.c_str(),
                                         BLUEZ_GATT_CHARACTERISTIC1, changedProps);
 
@@ -609,7 +607,6 @@ void HMS_BLE::bluezCleanupApp() {
 void HMS_BLE::stop() {
     if (!bluezBus) return;
 
-    // Stop background thread
     if (bluezBleThread && bluezThreadRunning) {
         bluezThreadRunning = false;
         bluezBleThread->join();
@@ -617,21 +614,18 @@ void HMS_BLE::stop() {
         bluezBleThread = nullptr;
     }
 
-    // Unregister advertisement
     if (bluezAdvPath && bluezAdapterPath) {
         sd_bus_call_method(bluezBus, "org.bluez", bluezAdapterPath,
                            BLUEZ_LE_ADVERTISING_MGR1, "UnregisterAdvertisement",
                            nullptr, nullptr, "o", bluezAdvPath);
     }
 
-    // Unregister GATT app (skip in beacon mode)
     if (bluezAppPath && bluezAdapterPath && bleMode != HMS_BLE_MODE_BEACON) {
         sd_bus_call_method(bluezBus, "org.bluez", bluezAdapterPath,
                            BLUEZ_GATT_MANAGER1, "UnregisterApplication",
                            nullptr, nullptr, "o", bluezAppPath);
     }
 
-    // Free memory
     free(bluezAdapterPath); bluezAdapterPath = nullptr;
     free(bluezAppPath);     bluezAppPath = nullptr;
     free(bluezAdvPath);     bluezAdvPath = nullptr;
