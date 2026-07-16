@@ -452,6 +452,13 @@ HMS_BLE_Status HMS_BLE::bluezRegisterApp() {
     int r;
     bluezAppPath = strdup("/com/hmsble/app");
 
+    // Register ObjectManager on the app path so BlueZ can discover child objects
+    r = sd_bus_add_object_manager(bluezBus, nullptr, bluezAppPath);
+    if (r < 0) {
+        BLE_LOGGER(error, "Failed to add object manager: %s", strerror(-r));
+        return HMS_BLE_STATUS_ERROR_INIT;
+    }
+
     int globalCharIdx = 0;
     for (size_t s = 0; s < serviceCount; s++) {
         char svcPath[256];
