@@ -72,6 +72,9 @@
     #include <bluetooth/bluetooth.h>
     #include <thread>
     #include <chrono>
+    #include <string>
+    #include <functional>
+    #include <array>
     #define HMS_BLE_BLUEZ_LINUX
     #define HMS_BLE_PLATFORM_DESKTOP
   #else

@@ -31,7 +31,6 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         ${SYSTEMD_LIBRARIES}
     )
     target_compile_features(HMS_BLE PUBLIC cxx_std_17)
-    target_compile_definitions(HMS_BLE PRIVATE HMS_BLE_BLUEZ_LINUX)
 
 # STM32 / generic CMake project
 else()
