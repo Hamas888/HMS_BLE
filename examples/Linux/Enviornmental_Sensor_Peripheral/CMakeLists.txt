@@ -1,4 +1,3 @@
-  GNU nano 8.4                                                       CMakeLists.txt
 cmake_minimum_required(VERSION 3.20.0)
 
 project(BLE_lib_dev)
