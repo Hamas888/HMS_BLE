@@ -82,8 +82,8 @@ int HMS_BLE::bluezServiceGetPrimary(sd_bus *bus, const char *path, const char *i
 
 static const sd_bus_vtable bluez_service_vtable[] = {
     SD_BUS_VTABLE_START(0),
-    SD_BUS_PROPERTY("UUID",    "s", HMS_BLE::bluezServiceGetUUID,    NULL, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
-    SD_BUS_PROPERTY("Primary", "b", HMS_BLE::bluezServiceGetPrimary, NULL, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_PROPERTY("UUID",    "s", HMS_BLE::bluezServiceGetUUID,    0, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_PROPERTY("Primary", "b", HMS_BLE::bluezServiceGetPrimary, 0, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
     SD_BUS_VTABLE_END
 };
 
@@ -264,11 +264,11 @@ int HMS_BLE::bluezCharMethodStopNotify(sd_bus_message* m, void* userdata, sd_bus
 
 static const sd_bus_vtable bluez_char_vtable[] = {
     SD_BUS_VTABLE_START(0),
-    SD_BUS_PROPERTY("UUID",      "s",   HMS_BLE::bluezCharGetUUID,      NULL, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
-    SD_BUS_PROPERTY("Service",   "o",   HMS_BLE::bluezCharGetService,   NULL, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
-    SD_BUS_PROPERTY("Value",     "ay",  HMS_BLE::bluezCharGetValue,     NULL, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
-    SD_BUS_PROPERTY("Flags",     "as",  HMS_BLE::bluezCharGetFlags,     NULL, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
-    SD_BUS_PROPERTY("Notifying", "b",   HMS_BLE::bluezCharGetNotifying, NULL, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_PROPERTY("UUID",      "s",   HMS_BLE::bluezCharGetUUID,      0, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_PROPERTY("Service",   "o",   HMS_BLE::bluezCharGetService,   0, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_PROPERTY("Value",     "ay",  HMS_BLE::bluezCharGetValue,     0, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_PROPERTY("Flags",     "as",  HMS_BLE::bluezCharGetFlags,     0, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_PROPERTY("Notifying", "b",   HMS_BLE::bluezCharGetNotifying, 0, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
     SD_BUS_METHOD("ReadValue",   "a{sv}", "ay", HMS_BLE::bluezCharMethodReadValue,  SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("WriteValue",  "aya{sv}", "",  HMS_BLE::bluezCharMethodWriteValue, SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("StartNotify", "", "",          HMS_BLE::bluezCharMethodStartNotify, SD_BUS_VTABLE_UNPRIVILEGED),
@@ -329,10 +329,10 @@ int HMS_BLE::bluezAdvMethodRelease(sd_bus_message* m, void* userdata, sd_bus_err
 
 static const sd_bus_vtable bluez_adv_vtable[] = {
     SD_BUS_VTABLE_START(0),
-    SD_BUS_PROPERTY("Type",          "s",  HMS_BLE::bluezAdvGetType,          NULL, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
-    SD_BUS_PROPERTY("ServiceUUIDs",  "as", HMS_BLE::bluezAdvGetServiceUUIDs,  NULL, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
-    SD_BUS_PROPERTY("LocalName",     "s",  HMS_BLE::bluezAdvGetLocalName,     NULL, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
-    SD_BUS_PROPERTY("Discoverable",  "b",  HMS_BLE::bluezAdvGetDiscoverable,  NULL, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_PROPERTY("Type",          "s",  HMS_BLE::bluezAdvGetType,          0, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_PROPERTY("ServiceUUIDs",  "as", HMS_BLE::bluezAdvGetServiceUUIDs,  0, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_PROPERTY("LocalName",     "s",  HMS_BLE::bluezAdvGetLocalName,     0, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_PROPERTY("Discoverable",  "b",  HMS_BLE::bluezAdvGetDiscoverable,  0, SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
     SD_BUS_METHOD("Release", "", "", HMS_BLE::bluezAdvMethodRelease, SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_VTABLE_END
 };
@@ -638,14 +638,6 @@ void HMS_BLE::stop() {
         bluezNotifEnabled[i] = false;
 
     BLE_LOGGER(info, "BlueZ BLE stopped");
-}
-
-// ==========================================================================
-// bluezMessageHandler: D-Bus signal handling (placeholder)
-// ==========================================================================
-int HMS_BLE::bluezMessageHandler(sd_bus_message* m, void* userdata, sd_bus_error* retError) {
-    (void)m; (void)userdata; (void)retError;
-    return 0;
 }
 
 #endif // HMS_BLE_BLUEZ_LINUX

@@ -486,34 +486,26 @@ class HMS_BLE {
       void                         uuidStringToBytes(const char *uuidStr, uint8_t bytes[16]);
       bool                         mapGlobalCharIdx(int globalCharIdx, int* svcIdx, int* localIdx) const;
 
-      // D-Bus vtable callbacks (static, routes via instance pointer)
-      static int                   bluezMessageHandler(sd_bus_message *m, void *userdata, sd_bus_error *retError);
-
-      // GattService1 property getters
+    public:
+      // ---- D-Bus vtable callbacks (public — referenced from file-scope vtable arrays) ----
       static int                   bluezServiceGetUUID(sd_bus *bus, const char *path, const char *iface, const char *prop, sd_bus_message *reply, void *userdata, sd_bus_error *retError);
       static int                   bluezServiceGetPrimary(sd_bus *bus, const char *path, const char *iface, const char *prop, sd_bus_message *reply, void *userdata, sd_bus_error *retError);
-
-      // GattCharacteristic1 property getters
       static int                   bluezCharGetUUID(sd_bus *bus, const char *path, const char *iface, const char *prop, sd_bus_message *reply, void *userdata, sd_bus_error *retError);
       static int                   bluezCharGetService(sd_bus *bus, const char *path, const char *iface, const char *prop, sd_bus_message *reply, void *userdata, sd_bus_error *retError);
       static int                   bluezCharGetValue(sd_bus *bus, const char *path, const char *iface, const char *prop, sd_bus_message *reply, void *userdata, sd_bus_error *retError);
       static int                   bluezCharGetFlags(sd_bus *bus, const char *path, const char *iface, const char *prop, sd_bus_message *reply, void *userdata, sd_bus_error *retError);
       static int                   bluezCharGetNotifying(sd_bus *bus, const char *path, const char *iface, const char *prop, sd_bus_message *reply, void *userdata, sd_bus_error *retError);
-
-      // GattCharacteristic1 method handlers
       static int                   bluezCharMethodReadValue(sd_bus_message *m, void *userdata, sd_bus_error *retError);
       static int                   bluezCharMethodWriteValue(sd_bus_message *m, void *userdata, sd_bus_error *retError);
       static int                   bluezCharMethodStartNotify(sd_bus_message *m, void *userdata, sd_bus_error *retError);
       static int                   bluezCharMethodStopNotify(sd_bus_message *m, void *userdata, sd_bus_error *retError);
-
-      // LEAdvertisement1 property getters
       static int                   bluezAdvGetType(sd_bus *bus, const char *path, const char *iface, const char *prop, sd_bus_message *reply, void *userdata, sd_bus_error *retError);
       static int                   bluezAdvGetServiceUUIDs(sd_bus *bus, const char *path, const char *iface, const char *prop, sd_bus_message *reply, void *userdata, sd_bus_error *retError);
       static int                   bluezAdvGetLocalName(sd_bus *bus, const char *path, const char *iface, const char *prop, sd_bus_message *reply, void *userdata, sd_bus_error *retError);
       static int                   bluezAdvGetDiscoverable(sd_bus *bus, const char *path, const char *iface, const char *prop, sd_bus_message *reply, void *userdata, sd_bus_error *retError);
-
-      // LEAdvertisement1 method handlers
       static int                   bluezAdvMethodRelease(sd_bus_message *m, void *userdata, sd_bus_error *retError);
+
+    private:
     #endif
 
 };
