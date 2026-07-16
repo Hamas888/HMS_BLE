@@ -43,7 +43,8 @@
   "license": "MIT",
   "homepage": "https://github.com/Hamas888/HMS_BLE",
   "examples": [
-    "examples"
+    "examples/PlatformIO/Arduino_ESP/Environmental_Sensor_Peripheral/src/main.cpp",
+    "examples/PlatformIO/Arduino_ESP/Environmental_Sensor_Beacon/src/main.cpp"
   ],
   "export": {
     "include": [

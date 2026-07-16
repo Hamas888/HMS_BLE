@@ -6,16 +6,20 @@
 
 HMS_BLE*            HMS_BLE::instance   = nullptr;
 
-HMS_BLE::HMS_BLE(const char* deviceName): 
-    bleConnected(false), oldConnected(false), received(false), 
-    manufacturerDataSet(false), backgroundProcess(false), bleInitialized(false), 
-    dataLength(0), characteristicCount(0), serviceCount(0), advertisedServiceCount(0),
-    defaultServiceCreated(false), deviceName(deviceName) {
+HMS_BLE::HMS_BLE(const char* deviceName, HMS_BLE_Mode mode): 
+    serviceCount(0), advertisedServiceCount(0), defaultServiceCreated(false),
+    received(false), dataLength(0), characteristicCount(0),
+    bleMode(mode), beaconDataSet(false), beaconADLen(0), beaconSDLen(0),
+    bleConnected(false), oldConnected(false), manufacturerDataSet(false), backgroundProcess(false), bleInitialized(false),
+    deviceName(deviceName) {
 
 
-    BLE_LOGGER(debug, "HMS_BLE instance created");
+    BLE_LOGGER(debug, "HMS_BLE instance created (%s mode)",
+               mode == HMS_BLE_MODE_BEACON ? "BEACON" : "PERIPHERAL");
 
     instance = this;
+    memset(beaconAD, 0, sizeof(beaconAD));
+    memset(beaconSD, 0, sizeof(beaconSD));
     memset(data, 0, sizeof(data));
     memset(serviceUUID, 0, sizeof(serviceUUID));
     memset(advertisedServices, 0, sizeof(advertisedServices));
@@ -172,6 +176,10 @@ size_t HMS_BLE::getCharacteristicCountForService(const char* svcUUID) const {
 // ========== Multi-Service API ==========
 
 HMS_BLE_Status HMS_BLE::addService(const HMS_BLE_Service* service) {
+    if(bleMode != HMS_BLE_MODE_PERIPHERAL) {
+        BLE_LOGGER(error, "addService() is only valid in PERIPHERAL mode");
+        return HMS_BLE_STATUS_ERROR_INIT;
+    }
     if(!service) {
         BLE_LOGGER(error, "Null service pointer provided");
         return HMS_BLE_STATUS_ERROR_INVALID_CHAR;
@@ -211,6 +219,10 @@ HMS_BLE_Status HMS_BLE::addService(const HMS_BLE_Service* service) {
 }
 
 HMS_BLE_Status HMS_BLE::addCharacteristicToService(const char* svcUUID, const HMS_BLE_Characteristic* characteristic) {
+    if(bleMode != HMS_BLE_MODE_PERIPHERAL) {
+        BLE_LOGGER(error, "addCharacteristicToService() is only valid in PERIPHERAL mode");
+        return HMS_BLE_STATUS_ERROR_INIT;
+    }
     if(!svcUUID || !characteristic) {
         BLE_LOGGER(error, "Null service UUID or characteristic pointer provided");
         return HMS_BLE_STATUS_ERROR_INVALID_CHAR;
@@ -288,6 +300,21 @@ HMS_BLE_Status HMS_BLE::begin(bool backThread) {
     if(bleInitialized) {
         BLE_LOGGER(warn, "BLE already initialized. Call begin() only once");
         return HMS_BLE_STATUS_ERROR_INIT;
+    }
+
+    if(bleMode == HMS_BLE_MODE_BEACON) {
+        if(!beaconDataSet) {
+            BLE_LOGGER(error, "Beacon mode: call setBeaconData() before begin()");
+            return HMS_BLE_STATUS_ERROR_INIT;
+        }
+        BLE_LOGGER(debug, "Starting BLE in beacon mode (%u bytes AD, %u bytes SD)",
+                   beaconADLen, beaconSDLen);
+        backgroundProcess = false; // beacon doesn't need background thread
+        HMS_BLE_Status status = init();
+        if(status == HMS_BLE_STATUS_SUCCESS) {
+            bleInitialized = true;
+        }
+        return status;
     }
     
     if(serviceCount == 0) {
@@ -389,6 +416,11 @@ HMS_BLE_Status HMS_BLE::sendDataToService(const char* svcUUID, const char* charU
 // ========== Legacy Single-Service API (Backward Compatible) ==========
 
 HMS_BLE_Status HMS_BLE::begin(const char* service_uuid, bool backThread) {
+    if(bleMode == HMS_BLE_MODE_BEACON) {
+        BLE_LOGGER(error, "begin(serviceUUID) not supported in beacon mode — use begin() without arguments");
+        return HMS_BLE_STATUS_ERROR_INIT;
+    }
+
     if(!service_uuid) {
         BLE_LOGGER(error, "Service UUID cannot be null");
         return HMS_BLE_STATUS_ERROR_INVALID_CHAR;
@@ -562,4 +594,209 @@ HMS_BLE_Status HMS_BLE::sendData(const char* characteristicUUID, const uint8_t* 
     
     BLE_LOGGER(error, "Characteristic UUID %s not found", characteristicUUID);
     return HMS_BLE_STATUS_ERROR_INVALID_CHAR;
+}
+
+// ========== Beacon API ==========
+
+HMS_BLE_Status HMS_BLE::setBeaconData(const uint8_t* ad, size_t adLen, const uint8_t* sd, size_t sdLen) {
+    if (bleMode != HMS_BLE_MODE_BEACON) {
+        BLE_LOGGER(warn, "setBeaconData() is only valid in BEACON mode");
+        return HMS_BLE_STATUS_ERROR_INIT;
+    }
+    if (!ad || adLen == 0 || adLen > HMS_BLE_MAX_AD_DATA) {
+        return HMS_BLE_STATUS_ERROR_INVALID_CHAR;
+    }
+    if (sd && sdLen > HMS_BLE_MAX_AD_DATA) {
+        return HMS_BLE_STATUS_ERROR_INVALID_CHAR;
+    }
+
+    memcpy(beaconAD, ad, adLen);
+    beaconADLen = adLen;
+
+    if (sd && sdLen > 0) {
+        memcpy(beaconSD, sd, sdLen);
+        beaconSDLen = sdLen;
+    } else {
+        beaconSDLen = 0;
+    }
+    beaconDataSet = true;
+    BLE_LOGGER(debug, "Beacon data set: AD=%u bytes, SD=%u bytes", adLen, beaconSDLen);
+
+    // Restart advertising with new data if already initialized
+    if (bleInitialized) {
+        restartAdvertising();
+    }
+    return HMS_BLE_STATUS_SUCCESS;
+}
+
+// ---- Beacon format builders ----
+// Eddystone TLD suffix codes (used by buildEddystoneURL)
+// 0x00=.com/ 0x01=.org/ 0x02=.edu/ 0x03=.net/ 0x04=.info/ 0x05=.biz/ 0x06=.gov/
+// 0x07=.com  0x08=.org  0x09=.edu  0x0A=.net  0x0B=.info  0x0C=.biz  0x0D=.gov
+static const char* const tldList[] = { ".com/", ".org/", ".edu/", ".net/", ".info/", ".biz/", ".gov/",
+                                       ".com",  ".org",  ".edu",  ".net",  ".info",  ".biz",  ".gov" };
+#define TLD_COUNT (sizeof(tldList) / sizeof(tldList[0]))
+#define TLD_SLASH_START 0
+#define TLD_NOSLASH_START 7
+
+size_t HMS_BLE::buildiBeaconAD(uint8_t* buf, size_t bufSize,
+                                const uint8_t proximityUUID[16],
+                                uint16_t major, uint16_t minor,
+                                int8_t txPower_dBm) {
+    // AD layout: [Flags(3)] [Manufacturer(28)] = 31 bytes max
+    if (!buf || !proximityUUID || bufSize < 31) return 0;
+
+    size_t pos = 0;
+    // Flags AD
+    buf[pos++] = 0x02;                             // AD length (type + data)
+    buf[pos++] = 0x01;                             // AD type: Flags
+    buf[pos++] = 0x06;                             // LE General Disc + BR/EDR not supported
+    // Manufacturer AD — Apple iBeacon
+    buf[pos++] = 26;                               // AD length (type + data: 1 + 25)
+    buf[pos++] = 0xFF;                             // AD type: Manufacturer Specific
+    buf[pos++] = 0x4C;                             // Company ID: Apple (little-endian)
+    buf[pos++] = 0x00;
+    buf[pos++] = 0x02;                             // iBeacon indicator
+    buf[pos++] = 0x15;
+    memcpy(&buf[pos], proximityUUID, 16);          // Proximity UUID
+    pos += 16;
+    buf[pos++] = (uint8_t)(major >> 8);            // Major (big-endian)
+    buf[pos++] = (uint8_t)(major & 0xFF);
+    buf[pos++] = (uint8_t)(minor >> 8);            // Minor (big-endian)
+    buf[pos++] = (uint8_t)(minor & 0xFF);
+    buf[pos++] = (uint8_t)txPower_dBm;             // Calibrated Tx Power
+    return pos;                                     // 31 bytes
+}
+
+// Detect URL scheme prefix and encode it; returns scheme code and advances past it.
+static int detectScheme(const char* url, const char** body) {
+    static const struct { const char* prefix; int code; } schemes[] = {
+        {"http://www.",  0},
+        {"https://www.", 1},
+        {"http://",      2},
+        {"https://",     3},
+    };
+    for (int i = 0; i < 4; i++) {
+        size_t plen = strlen(schemes[i].prefix);
+        if (strncmp(url, schemes[i].prefix, plen) == 0) {
+            *body = url + plen;
+            return schemes[i].code;
+        }
+    }
+    return -1; // unknown scheme
+}
+
+// Encode TLD at end of URL body; returns TLD code or -1 if not found.
+// Also sets *tldLen to the length of the TLD string (including dot).
+static int encodeTLD(const char* body, size_t bodyLen, size_t* tldLen) {
+    for (size_t i = 0; i < TLD_COUNT; i++) {
+        size_t tlen = strlen(tldList[i]);
+        if (bodyLen >= tlen && memcmp(body + bodyLen - tlen, tldList[i], tlen) == 0) {
+            *tldLen = tlen;
+            return (int)(i + TLD_SLASH_START);
+        }
+    }
+    return -1;
+}
+
+size_t HMS_BLE::buildEddystoneURL(uint8_t* buf, size_t bufSize,
+                                   const char* url, int8_t txPower_dBm) {
+    // AD layout: [Flags(3)] [UUID16(4)] [Service Data(5 + encoded_url)]
+    if (!buf || !url || bufSize < 12) return 0;
+
+    const char* body;
+    int scheme = detectScheme(url, &body);
+    if (scheme < 0) return 0;                       // invalid/no scheme
+
+    size_t bodyLen = strlen(body);
+    size_t tldLen = 0;
+    int tldCode = encodeTLD(body, bodyLen, &tldLen);
+
+    size_t encLen = bodyLen;
+    if (tldCode >= 0) encLen = bodyLen - tldLen + 1; // TLD replaced by 1 byte
+
+    size_t sdLen = 5 + encLen;                       // 0xAA 0xFE + frame(1) + tx(1) + scheme(1) + encoded
+    if (sdLen > 27) return 0;                        // would exceed AD limit
+
+    size_t pos = 0;
+    // Flags AD
+    buf[pos++] = 0x02;
+    buf[pos++] = 0x01;
+    buf[pos++] = 0x06;
+    // Service UUID AD (Eddystone 0xFEAA)
+    buf[pos++] = 0x03;
+    buf[pos++] = 0x03;
+    buf[pos++] = 0xAA;
+    buf[pos++] = 0xFE;
+    // Service Data AD
+    buf[pos++] = (uint8_t)(sdLen + 1);               // AD length = type(1) + sdLen
+    buf[pos++] = 0x16;                                // AD type: Service Data - 16-bit UUID
+    buf[pos++] = 0xAA;
+    buf[pos++] = 0xFE;
+    buf[pos++] = 0x10;                                // Frame type: Eddystone-URL
+    buf[pos++] = (uint8_t)txPower_dBm;
+    buf[pos++] = (uint8_t)scheme;                     // URL scheme prefix code
+    // Encoded URL body
+    if (tldCode >= 0) {
+        memcpy(&buf[pos], body, bodyLen - tldLen);    // copy body without TLD
+        pos += bodyLen - tldLen;
+        buf[pos++] = (uint8_t)tldCode;                // TLD suffix code
+    } else {
+        memcpy(&buf[pos], body, bodyLen);             // copy entire body as-is
+        pos += bodyLen;
+    }
+    return pos;
+}
+
+size_t HMS_BLE::buildEddystoneUID(uint8_t* buf, size_t bufSize,
+                                   const uint8_t namespaceID[10],
+                                   const uint8_t instanceID[6],
+                                   int8_t txPower_dBm) {
+    // AD layout: [Flags(3)] [UUID16(4)] [Service Data(5 + 2 + 10 + 6)]
+    // Frame data: 0x00 + txPower + namespace(10) + instance(6) = 18 bytes
+    if (!buf || !namespaceID || !instanceID || bufSize < 27) return 0;
+
+    size_t pos = 0;
+    // Flags AD
+    buf[pos++] = 0x02;
+    buf[pos++] = 0x01;
+    buf[pos++] = 0x06;
+    // Service UUID AD
+    buf[pos++] = 0x03;
+    buf[pos++] = 0x03;
+    buf[pos++] = 0xAA;
+    buf[pos++] = 0xFE;
+    // Service Data AD
+    buf[pos++] = 20;                                 // AD length: type(1) + UUID(2) + frame(18) = 20
+    buf[pos++] = 0x16;
+    buf[pos++] = 0xAA;
+    buf[pos++] = 0xFE;
+    buf[pos++] = 0x00;                                // Frame type: Eddystone-UID
+    buf[pos++] = (uint8_t)txPower_dBm;
+    memcpy(&buf[pos], namespaceID, 10);               // 10-byte namespace
+    pos += 10;
+    memcpy(&buf[pos], instanceID, 6);                 // 6-byte instance
+    pos += 6;
+    return pos;                                        // 27 bytes
+}
+
+size_t HMS_BLE::buildManufacturerAD(uint8_t* buf, size_t bufSize,
+                                     uint16_t companyID,
+                                     const uint8_t* mfgData, size_t mfgLen) {
+    // AD layout: [Flags(3)] [Manufacturer(3 + mfgLen)]
+    if (!buf || !mfgData || bufSize < (6 + mfgLen) || mfgLen > 26) return 0;
+
+    size_t pos = 0;
+    // Flags AD
+    buf[pos++] = 0x02;
+    buf[pos++] = 0x01;
+    buf[pos++] = 0x06;
+    // Manufacturer AD
+    buf[pos++] = (uint8_t)(1 + 2 + mfgLen);           // AD length: type(1) + companyID(2) + mfgData
+    buf[pos++] = 0xFF;                                 // AD type: Manufacturer Specific
+    buf[pos++] = (uint8_t)(companyID & 0xFF);          // Company ID (little-endian)
+    buf[pos++] = (uint8_t)(companyID >> 8);
+    memcpy(&buf[pos], mfgData, mfgLen);
+    pos += mfgLen;
+    return pos;
 }

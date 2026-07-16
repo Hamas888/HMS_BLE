@@ -3,6 +3,17 @@
 #if defined(HMS_BLE_ARDUINO_ESP32)
 
 void HMS_BLE::stop() {
+    NimBLEAdvertising* pAdvertising = NimBLEDevice::getAdvertising();
+    if (pAdvertising) {
+        pAdvertising->stop();
+    }
+
+    // ---- Beacon mode: no connection/thread to clean up ----
+    if (bleMode == HMS_BLE_MODE_BEACON) {
+        NimBLEDevice::deinit();
+        return;
+    }
+
     if (bleTaskHandle != nullptr) {
         vTaskDelete(bleTaskHandle);
         bleTaskHandle = nullptr;
@@ -12,6 +23,13 @@ void HMS_BLE::stop() {
 
 HMS_BLE_Status HMS_BLE::init() {
     NimBLEDevice::init(deviceName);
+
+    // ---- Beacon mode: lightweight init, no GATT ----
+    if (bleMode == HMS_BLE_MODE_BEACON) {
+        restartAdvertising();
+        return HMS_BLE_STATUS_SUCCESS;
+    }
+
     bleServer = NimBLEDevice::createServer();
     if(!bleServer) {
         BLE_LOGGER(error, "Failed to create NimBLE server");
@@ -119,12 +137,37 @@ HMS_BLE_Status HMS_BLE::init() {
 }
 
 void HMS_BLE::restartAdvertising() {
-    if (bleServer) {
-        NimBLEAdvertising* pAdvertising = NimBLEDevice::getAdvertising();
-        if(pAdvertising) {
-            pAdvertising->start();
+    NimBLEAdvertising* pAdvertising = NimBLEDevice::getAdvertising();
+    if (!pAdvertising) return;
+
+    pAdvertising->stop();
+
+    // ---- Beacon mode: raw AD/SD, non-connectable ----
+    if (bleMode == HMS_BLE_MODE_BEACON) {
+        pAdvertising->setAdvertisementData(
+            std::string(reinterpret_cast<const char*>(beaconAD), beaconADLen)
+        );
+
+        if (beaconSDLen > 0) {
+            pAdvertising->setScanResponseData(
+                std::string(reinterpret_cast<const char*>(beaconSD), beaconSDLen)
+            );
         }
+
+        pAdvertising->setScanResponse(true);
+        pAdvertising->setMinPreferred(0x06);
+        pAdvertising->setMaxPreferred(0x0A);
+        pAdvertising->setAdvertisementType(BLE_HCI_ADV_NONCONN_IND);
+        pAdvertising->start();
+
+        BLE_LOGGER(info, "Beacon advertising started (%u bytes AD, %u bytes SD)",
+                   beaconADLen, beaconSDLen);
+        return;
     }
+
+    // ---- Peripheral mode ----
+    if (!bleServer) return;
+    pAdvertising->start();
 }
 
 void HMS_BLE::bleTask(void* pvParameters) {

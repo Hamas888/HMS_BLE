@@ -110,6 +110,12 @@ HMS_BLE_Status HMS_BLE::init() {
         // Not a critical error, continue
     }
 
+    // ---- Beacon mode: lightweight init, no GATT ----
+    if (bleMode == HMS_BLE_MODE_BEACON) {
+        restartAdvertising();
+        return HMS_BLE_STATUS_SUCCESS;
+    }
+
     // 3. Register Connection Callbacks
     conn_callbacks.connected = zephyrConnectedCallback;
     conn_callbacks.disconnected = zephyrDisconnectedCallback;
@@ -121,18 +127,24 @@ HMS_BLE_Status HMS_BLE::init() {
         return HMS_BLE_STATUS_ERROR_INIT;
     }
 
-    // 5. Register GATT Service
-    // We need to allocate the service structure dynamically or use a member variable
-    zephyrGattService = new struct bt_gatt_service();
-    zephyrGattService->attrs = zephyrGattAttrs;
-    zephyrGattService->attr_count = zephyrAttrCount;
-    
-    err = bt_gatt_service_register(zephyrGattService);
-    if (err) {
-        BLE_LOGGER(error, "Failed to register GATT service (err %d)", err);
-        return HMS_BLE_STATUS_ERROR_INIT;
+    // 5. Register GATT Services (one per service, each with its own bt_gatt_service)
+    {
+        size_t totalAttrs = 0U;
+        for (size_t s = 0U; s < serviceCount; s++) {
+            zephyrGattServices[s]             = new struct bt_gatt_service();
+            zephyrGattServices[s]->attrs      = zephyrGattAttrArrays[s];
+            zephyrGattServices[s]->attr_count = zephyrAttrCounts[s];
+
+            err = bt_gatt_service_register(zephyrGattServices[s]);
+            if (err) {
+                BLE_LOGGER(error, "Failed to register GATT service %d (err %d)", s, err);
+                return HMS_BLE_STATUS_ERROR_INIT;
+            }
+            totalAttrs += zephyrAttrCounts[s];
+            BLE_LOGGER(debug, "Service %d registered: %d attrs", s, zephyrAttrCounts[s]);
+        }
+        BLE_LOGGER(info, "GATT: %d services, %d total attributes registered", serviceCount, totalAttrs);
     }
-    BLE_LOGGER(info, "GATT Service registered with %d attributes", zephyrAttrCount);
 
     // 5. Start Advertising
     restartAdvertising();
@@ -164,49 +176,149 @@ HMS_BLE_Status HMS_BLE::init() {
 
 void HMS_BLE::restartAdvertising() {
     int err;
-    
-    // Stop any existing advertising
+
     bt_le_adv_stop();
 
-    // Check if service UUID is a standard 16-bit UUID
-    bool use16BitUUID = is16BitUUID(serviceUUID);
-    uint16_t uuid16 = use16BitUUID ? parse16BitUUID(serviceUUID) : 0;
-    
-    // For 16-bit UUIDs, advertise as 16-bit for proper recognition by apps
-    // Store the 16-bit UUID in little-endian format for advertising
-    uint8_t uuid16_le[2] = { (uint8_t)(uuid16 & 0xFF), (uint8_t)((uuid16 >> 8) & 0xFF) };
-    
-    // Define Advertising Data
-    // Flags: General Discoverable, BR/EDR Not Supported
-    // Service UUID: Use 16-bit or 128-bit based on the service UUID format
-    struct bt_data ad[2];
-    ad[0] = (struct bt_data)BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR));
-    
-    if (use16BitUUID) {
-        ad[1] = (struct bt_data)BT_DATA(BT_DATA_UUID16_ALL, uuid16_le, 2);
-    } else {
-        ad[1] = (struct bt_data)BT_DATA(BT_DATA_UUID128_ALL, zephyrServiceUUID.val, 16);
+    // ---- Beacon mode: raw AD/SD, non-connectable ----
+    if (bleMode == HMS_BLE_MODE_BEACON) {
+        static struct bt_data beaconAd[HMS_BLE_MAX_AD_DATA];
+        uint8_t beaconAdCount = 0;
+        static struct bt_data beaconSd[HMS_BLE_MAX_AD_DATA];
+        uint8_t beaconSdCount = 0;
+
+        // Parse raw AD buffer into bt_data entries
+        size_t off = 0;
+        while (off < beaconADLen && beaconAdCount < HMS_BLE_MAX_AD_DATA) {
+            uint8_t len = beaconAD[off];
+            if (len < 1 || off + 1 + len > beaconADLen) break;
+            beaconAd[beaconAdCount].type     = beaconAD[off + 1];
+            beaconAd[beaconAdCount].data_len = len - 1;
+            beaconAd[beaconAdCount].data     = &beaconAD[off + 2];
+            beaconAdCount++;
+            off += 1 + len;
+        }
+
+        // Parse raw SD buffer into bt_data entries
+        off = 0;
+        while (off < beaconSDLen && beaconSdCount < HMS_BLE_MAX_AD_DATA) {
+            uint8_t len = beaconSD[off];
+            if (len < 1 || off + 1 + len > beaconSDLen) break;
+            beaconSd[beaconSdCount].type     = beaconSD[off + 1];
+            beaconSd[beaconSdCount].data_len = len - 1;
+            beaconSd[beaconSdCount].data     = &beaconSD[off + 2];
+            beaconSdCount++;
+            off += 1 + len;
+        }
+
+        // Auto-append device name to scan response so phones show a recognizable name
+        if (deviceName && strlen(deviceName) > 0) {
+            size_t nameLen = strlen(deviceName);
+            if (nameLen > 29) nameLen = 29;
+            // Check if name is already present in user's SD
+            bool nameFound = false;
+            for (uint8_t i = 0; i < beaconSdCount; i++) {
+                if (beaconSd[i].type == BT_DATA_NAME_COMPLETE ||
+                    beaconSd[i].type == BT_DATA_NAME_SHORTENED) {
+                    nameFound = true;
+                    break;
+                }
+            }
+            if (!nameFound && beaconSdCount < HMS_BLE_MAX_AD_DATA) {
+                static uint8_t nameBuf[30];
+                memcpy(nameBuf, deviceName, nameLen);
+                beaconSd[beaconSdCount].type     = BT_DATA_NAME_COMPLETE;
+                beaconSd[beaconSdCount].data_len = nameLen;
+                beaconSd[beaconSdCount].data     = nameBuf;
+                beaconSdCount++;
+            }
+        }
+
+        k_msleep(50);
+        static const struct bt_le_adv_param beaconParam =
+            BT_LE_ADV_PARAM_INIT(0, BT_GAP_ADV_FAST_INT_MIN_2,
+                                 BT_GAP_ADV_FAST_INT_MAX_2, NULL);
+        err = bt_le_adv_start(
+            &beaconParam,
+            beaconAd, beaconAdCount,
+            beaconSdCount > 0 ? beaconSd : NULL, beaconSdCount
+        );
+        if (err) {
+            BLE_LOGGER(error, "Beacon advertising failed to start (err %d)", err);
+        } else {
+            BLE_LOGGER(info, "Beacon advertising started (%d AD, %d SD entries)",
+                       beaconAdCount, beaconSdCount);
+        }
+        return;
     }
 
-    // Define Scan Response Data (Device Name + Manufacturer Data if set)
-    struct bt_data sd[2];
-    int sd_count = 1;
-    sd[0] = (struct bt_data)BT_DATA(BT_DATA_NAME_COMPLETE, deviceName, (uint8_t)strlen(deviceName));
-    
-    // Add manufacturer data if set
+    // Collect service UUIDs to advertise
+    // Use advertisedServices[] if set, otherwise iterate all registered services
+    size_t advCount = (advertisedServiceCount > 0) ? advertisedServiceCount : serviceCount;
+    const char** advUUIDs = (advertisedServiceCount > 0)
+        ? advertisedServices
+        : nullptr; // will iterate services[] directly
+
+    // Separate 16-bit and 128-bit UUIDs
+    uint8_t uuid16_le[HMS_BLE_MAX_SERVICES * 2]; // packed 2 bytes each
+    int n16 = 0;
+    int first128 = -1;
+
+    for (size_t i = 0; i < advCount; i++) {
+        const char* uuid;
+        if (advertisedServiceCount > 0) {
+            uuid = advUUIDs[i];
+        } else {
+            uuid = services[i].service.uuid.c_str();
+        }
+        if (is16BitUUID(uuid)) {
+            uint16_t val = parse16BitUUID(uuid);
+            uuid16_le[n16 * 2]     = (uint8_t)(val & 0xFF);
+            uuid16_le[n16 * 2 + 1] = (uint8_t)((val >> 8) & 0xFF);
+            n16++;
+        } else if (first128 < 0) {
+            // Store index for 128-bit lookup
+            for (size_t s = 0; s < serviceCount; s++) {
+                if (strcmp(services[s].service.uuid.c_str(), uuid) == 0) {
+                    if (zephyrServiceIs16[s]) {
+                        // already handled as 16-bit above — skip
+                    } else {
+                        first128 = (int)s;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    // AD: Flags + service UUID(s)
+    static const uint8_t ad_flags_val = BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR;
+    struct bt_data ad_buf[2];
+    int ad_count = 1;
+    ad_buf[0] = BT_DATA(BT_DATA_FLAGS, &ad_flags_val, sizeof(ad_flags_val));
+
+    if (n16 > 0) {
+        // Pack all 16-bit service UUIDs into one AD entry
+        ad_buf[1] = BT_DATA(BT_DATA_UUID16_ALL, uuid16_le, (uint8_t)(n16 * 2));
+        ad_count = 2;
+    } else if (first128 >= 0) {
+        // Advertise the first 128-bit service
+        ad_buf[1] = BT_DATA(BT_DATA_UUID128_ALL, zephyrServiceUUIDArr[first128].val, 16);
+        ad_count = 2;
+    }
+
+    // SD: Device name + optional manufacturer data
+    struct bt_data sd_buf[3];
+    int sd_count = 0;
+    sd_buf[sd_count++] = BT_DATA(BT_DATA_NAME_COMPLETE, (const uint8_t*)deviceName, (uint8_t)strlen(deviceName));
+
     if (manufacturerDataSet) {
-        static uint8_t mfg_data[8]; // 2 bytes company ID + up to 6 bytes data
-        mfg_data[0] = manufacturerData.manufacturer_id[0];
-        mfg_data[1] = manufacturerData.manufacturer_id[1];
-        memcpy(&mfg_data[2], manufacturerData.data.data(), 6);
-        sd[1] = (struct bt_data)BT_DATA(BT_DATA_MANUFACTURER_DATA, mfg_data, 8);
-        sd_count = 2;
+        static uint8_t mfg[8];
+        mfg[0] = manufacturerData.manufacturer_id[0];
+        mfg[1] = manufacturerData.manufacturer_id[1];
+        memcpy(&mfg[2], manufacturerData.data.data(), 6);
+        sd_buf[sd_count++] = BT_DATA(BT_DATA_MANUFACTURER_DATA, mfg, sizeof(mfg));
     }
 
-    // Start Advertising
-    // Note: BT_LE_ADV_CONN uses BT_LE_ADV_OPT_CONNECTABLE which is deprecated in newer Zephyr
-    // We use BT_LE_ADV_OPT_CONN which is the replacement (or BIT(0) if not defined).
-    
     #ifndef BT_LE_ADV_OPT_CONN
     #define BT_LE_ADV_OPT_CONN BIT(0)
     #endif
@@ -217,8 +329,10 @@ void HMS_BLE::restartAdvertising() {
         BT_GAP_ADV_FAST_INT_MAX_2,
         NULL
     );
-    
-    err = bt_le_adv_start(&param, ad, ARRAY_SIZE(ad), sd, sd_count);
+
+    k_msleep(50);
+
+    err = bt_le_adv_start(&param, ad_buf, ad_count, sd_buf, sd_count);
     if (err) {
         BLE_LOGGER(error, "Advertising failed to start (err %d)", err);
         return;
@@ -228,6 +342,7 @@ void HMS_BLE::restartAdvertising() {
 
 void HMS_BLE::stop() {
     bt_le_adv_stop();
+    if (bleMode == HMS_BLE_MODE_BEACON) return;        // beacon: no connection/thread to clean up
     
     // Stop background thread if running
     if (backgroundProcess && zephyrBleThreadId) {
@@ -246,156 +361,124 @@ void HMS_BLE::stop() {
 }
 
 int HMS_BLE::buildGattAttributes() {
-    // Calculate total attributes needed:
-    // 1 for Service Declaration
-    // For each characteristic:
-    //   1 for Characteristic Declaration
-    //   1 for Characteristic Value
-    //   1 for CCC (if Notify/Indicate is enabled)
-    //   1 for CUD (User Description) if name is present
-    
-    size_t totalAttrs = 1; // Service itself
-    for (size_t i = 0; i < characteristicCount; i++) {
-        totalAttrs += 2; // Decl + Value
-        if (characteristics[i].properties & (HMS_BLE_PROPERTY_NOTIFY | HMS_BLE_PROPERTY_INDICATE)) {
-            totalAttrs += 1; // CCC
+    size_t globalCharIdx = 0U;
+
+    for (size_t s = 0U; s < serviceCount; s++) {
+        // Count attrs for this service: 1 primary decl + 2 per char + optional CCC/CUD
+        size_t svcAttrs = 1U;
+        for (size_t c = 0U; c < services[s].characteristicCount; c++) {
+            svcAttrs += 2U; // char decl + value
+            if (services[s].characteristics[c].properties & (HMS_BLE_PROPERTY_NOTIFY | HMS_BLE_PROPERTY_INDICATE)) {
+                svcAttrs += 1U; // CCC
+            }
+            if (!services[s].characteristics[c].name.empty()) {
+                svcAttrs += 1U; // CUD
+            }
         }
-        if (!characteristics[i].name.empty()) {
-            totalAttrs += 1; // CUD
-        }
-    }
 
-    // Allocate attributes array
-    zephyrGattAttrs = new struct bt_gatt_attr[totalAttrs];
-    zephyrAttrCount = totalAttrs;
-    size_t attrIdx = 0;
+        zephyrGattAttrArrays[s] = new struct bt_gatt_attr[svcAttrs];
+        zephyrAttrCounts[s]     = svcAttrs;
+        size_t attrIdx          = 0U;
 
-    // 1. Service Declaration
-    // Check if service UUID is 16-bit standard UUID
-    zephyrServiceUUID16 = is16BitUUID(serviceUUID);
-    if (zephyrServiceUUID16) {
-        zephyrServiceUUID16Val = parse16BitUUID(serviceUUID);
-        zephyrServiceUUID16Struct.uuid.type = BT_UUID_TYPE_16;
-        zephyrServiceUUID16Struct.val = zephyrServiceUUID16Val;
-        zephyrGattAttrs[attrIdx++] = BT_GATT_PRIMARY_SERVICE(&zephyrServiceUUID16Struct);
-    } else {
-        convertUUIDStringToZephyr(serviceUUID, &zephyrServiceUUID);
-        zephyrGattAttrs[attrIdx++] = BT_GATT_PRIMARY_SERVICE(&zephyrServiceUUID);
-    }
-
-    // 2. Characteristics
-    for (size_t i = 0; i < characteristicCount; i++) {
-        // Check if characteristic UUID is 16-bit standard UUID
-        zephyrCharUUID16[i] = is16BitUUID(characteristics[i].uuid.c_str());
-        
-        if (zephyrCharUUID16[i]) {
-            uint16_t uuid16 = parse16BitUUID(characteristics[i].uuid.c_str());
-            zephyrCharUUID16Structs[i].uuid.type = BT_UUID_TYPE_16;
-            zephyrCharUUID16Structs[i].val = uuid16;
+        // Primary service declaration
+        const char *svcUuidStr = services[s].service.uuid.c_str();
+        zephyrServiceIs16[s]   = is16BitUUID(svcUuidStr);
+        if (zephyrServiceIs16[s]) {
+            zephyrServiceUUID16Vals[s]          = parse16BitUUID(svcUuidStr);
+            zephyrServiceUUID16Arr[s].uuid.type = BT_UUID_TYPE_16;
+            zephyrServiceUUID16Arr[s].val       = zephyrServiceUUID16Vals[s];
+            zephyrGattAttrArrays[s][attrIdx++]  = BT_GATT_PRIMARY_SERVICE(&zephyrServiceUUID16Arr[s]);
         } else {
-            convertUUIDStringToZephyr(characteristics[i].uuid.c_str(), &zephyrCharUUIDs[i]);
+            convertUUIDStringToZephyr(svcUuidStr, &zephyrServiceUUIDArr[s]);
+            zephyrGattAttrArrays[s][attrIdx++] = BT_GATT_PRIMARY_SERVICE(&zephyrServiceUUIDArr[s]);
         }
 
-        // Determine Properties and Permissions
-        uint8_t props = 0;
-        uint8_t perms = 0;
+        // Characteristics
+        for (size_t c = 0U; c < services[s].characteristicCount; c++) {
+            const HMS_BLE_Characteristic &ch = services[s].characteristics[c];
 
-        if (characteristics[i].properties & HMS_BLE_PROPERTY_READ) {
-            props |= BT_GATT_CHRC_READ;
-            perms |= BT_GATT_PERM_READ;
-        }
-        if (characteristics[i].properties & HMS_BLE_PROPERTY_WRITE) {
-            props |= BT_GATT_CHRC_WRITE;
-            perms |= BT_GATT_PERM_WRITE;
-        }
-        if (characteristics[i].properties & HMS_BLE_PROPERTY_NOTIFY) {
-            props |= BT_GATT_CHRC_NOTIFY;
-        }
-        if (characteristics[i].properties & HMS_BLE_PROPERTY_INDICATE) {
-            props |= BT_GATT_CHRC_INDICATE;
-        }
+            bool char16 = is16BitUUID(ch.uuid.c_str());
+            zephyrCharUUID16[globalCharIdx] = char16;
+            if (char16) {
+                uint16_t u16 = parse16BitUUID(ch.uuid.c_str());
+                zephyrCharUUID16Structs[globalCharIdx].uuid.type = BT_UUID_TYPE_16;
+                zephyrCharUUID16Structs[globalCharIdx].val       = u16;
+            } else {
+                convertUUIDStringToZephyr(ch.uuid.c_str(), &zephyrCharUUIDs[globalCharIdx]);
+            }
 
-        // Characteristic Declaration
-        // We must use a struct bt_gatt_chrc for user_data, not just the properties byte.
-        // The read_chrc callback expects this struct.
-        // Use 16-bit or 128-bit UUID based on what we detected
-        if (zephyrCharUUID16[i]) {
-            zephyrCharDeclarations[i].uuid = (const struct bt_uuid *)&zephyrCharUUID16Structs[i];
-        } else {
-            zephyrCharDeclarations[i].uuid = (const struct bt_uuid *)&zephyrCharUUIDs[i];
-        }
-        zephyrCharDeclarations[i].value_handle = 0; // Stack will fix this up
-        zephyrCharDeclarations[i].properties = props;
+            uint8_t props = 0U;
+            uint8_t perms = 0U;
+            if (ch.properties & HMS_BLE_PROPERTY_READ)     { props |= BT_GATT_CHRC_READ;    perms |= BT_GATT_PERM_READ; }
+            if (ch.properties & HMS_BLE_PROPERTY_WRITE)    { props |= BT_GATT_CHRC_WRITE;   perms |= BT_GATT_PERM_WRITE; }
+            if (ch.properties & HMS_BLE_PROPERTY_NOTIFY)   { props |= BT_GATT_CHRC_NOTIFY; }
+            if (ch.properties & HMS_BLE_PROPERTY_INDICATE) { props |= BT_GATT_CHRC_INDICATE; }
 
-        zephyrGattAttrs[attrIdx++] = BT_GATT_ATTRIBUTE(
-            BT_UUID_GATT_CHRC,
-            BT_GATT_PERM_READ,
-            bt_gatt_attr_read_chrc,
-            NULL,
-            &zephyrCharDeclarations[i] // Pass the struct pointer
-        );
-        
-        // Characteristic Value - use 16-bit or 128-bit UUID
-        const struct bt_uuid *charValueUUID;
-        if (zephyrCharUUID16[i]) {
-            charValueUUID = (const struct bt_uuid *)&zephyrCharUUID16Structs[i];
-        } else {
-            charValueUUID = &zephyrCharUUIDs[i].uuid;
-        }
-        
-        zephyrGattAttrs[attrIdx] = BT_GATT_ATTRIBUTE(
-            charValueUUID,
-            perms,
-            zephyrReadCallback,
-            zephyrWriteCallback,
-            (void*)i // Store index as user_data to identify characteristic in callbacks
-        );
-        attrIdx++;
+            zephyrCharDeclarations[globalCharIdx].uuid = char16
+                ? (const struct bt_uuid *)&zephyrCharUUID16Structs[globalCharIdx]
+                : (const struct bt_uuid *)&zephyrCharUUIDs[globalCharIdx];
+            zephyrCharDeclarations[globalCharIdx].value_handle = 0U;
+            zephyrCharDeclarations[globalCharIdx].properties   = props;
 
-        // CCC (Client Characteristic Configuration)
-        if (props & (BT_GATT_CHRC_NOTIFY | BT_GATT_CHRC_INDICATE)) {
-            // Manually construct CCC attribute because BT_GATT_CCC macro is for static definition
-            // and creates a local array which fails in assignment.
-            // We use our pre-allocated zephyrCccCfg array.
-            
-            // Initialize the CCC config for this characteristic
-            // We use our custom ZephyrCCC struct to match Zephyr's internal layout
-            // Zero out the struct first
-            memset(&zephyrCccObjects[i], 0, sizeof(ZephyrCCC));
-            
-            // Set the callbacks
-            zephyrCccObjects[i].cfg_changed = zephyrCccChangedCallback;
-            zephyrCccObjects[i].cfg_write = NULL; 
-            zephyrCccObjects[i].cfg_match = NULL;
-
-            zephyrGattAttrs[attrIdx] = BT_GATT_ATTRIBUTE(
-                BT_UUID_GATT_CCC,
-                BT_GATT_PERM_READ | BT_GATT_PERM_WRITE,
-                bt_gatt_attr_read_ccc,
-                bt_gatt_attr_write_ccc,
-                &zephyrCccObjects[i] // Pass the pointer to the custom struct which mimics _bt_gatt_ccc
+            // Characteristic declaration attribute
+            zephyrGattAttrArrays[s][attrIdx++] = BT_GATT_ATTRIBUTE(
+                BT_UUID_GATT_CHRC, BT_GATT_PERM_READ,
+                bt_gatt_attr_read_chrc, NULL,
+                &zephyrCharDeclarations[globalCharIdx]
             );
-            
-            attrIdx++;
-        }
-        
-        // CUD (Characteristic User Description)
-        if (!characteristics[i].name.empty()) {
-            // Copy name to storage
-            strncpy(zephyrCharUserDesc[i], characteristics[i].name.c_str(), sizeof(zephyrCharUserDesc[i]) - 1);
-            zephyrCharUserDesc[i][sizeof(zephyrCharUserDesc[i]) - 1] = '\0';
-            
-            zephyrGattAttrs[attrIdx] = BT_GATT_ATTRIBUTE(
-                BT_UUID_GATT_CUD,
-                BT_GATT_PERM_READ,
-                bt_gatt_attr_read_cud,
-                NULL,
-                zephyrCharUserDesc[i] // Pass the string pointer
+
+            // Characteristic value attribute
+            const struct bt_uuid *charValueUUID = char16
+                ? (const struct bt_uuid *)&zephyrCharUUID16Structs[globalCharIdx]
+                : &zephyrCharUUIDs[globalCharIdx].uuid;
+
+            zephyrGattAttrArrays[s][attrIdx++] = BT_GATT_ATTRIBUTE(
+                charValueUUID, perms,
+                zephyrReadCallback, zephyrWriteCallback,
+                (void *)(uintptr_t)globalCharIdx
             );
-            attrIdx++;
+
+            // CCC for notify/indicate
+            if (props & (BT_GATT_CHRC_NOTIFY | BT_GATT_CHRC_INDICATE)) {
+                memset(&zephyrCccObjects[globalCharIdx], 0, sizeof(ZephyrCCC));
+                zephyrCccObjects[globalCharIdx].cfg_changed = zephyrCccChangedCallback;
+                zephyrCccObjects[globalCharIdx].cfg_write   = NULL;
+                zephyrCccObjects[globalCharIdx].cfg_match   = NULL;
+                zephyrGattAttrArrays[s][attrIdx++] = BT_GATT_ATTRIBUTE(
+                    BT_UUID_GATT_CCC,
+                    BT_GATT_PERM_READ | BT_GATT_PERM_WRITE,
+                    bt_gatt_attr_read_ccc, bt_gatt_attr_write_ccc,
+                    &zephyrCccObjects[globalCharIdx]
+                );
+            }
+
+            // CUD (user description)
+            if (!ch.name.empty()) {
+                strncpy(zephyrCharUserDesc[globalCharIdx], ch.name.c_str(),
+                        sizeof(zephyrCharUserDesc[globalCharIdx]) - 1U);
+                zephyrCharUserDesc[globalCharIdx][sizeof(zephyrCharUserDesc[globalCharIdx]) - 1U] = '\0';
+                zephyrGattAttrArrays[s][attrIdx++] = BT_GATT_ATTRIBUTE(
+                    BT_UUID_GATT_CUD, BT_GATT_PERM_READ,
+                    bt_gatt_attr_read_cud, NULL,
+                    zephyrCharUserDesc[globalCharIdx]
+                );
+            }
+
+            // Store reverse mapping: globalCharIdx → (serviceIndex, localCharIndex)
+            zephyrCharServiceMap[globalCharIdx] = s;
+            zephyrCharLocalMap[globalCharIdx]   = c;
+
+            globalCharIdx++;
         }
+
+        BLE_LOGGER(debug, "Service %d: built %d attrs for %d chars",
+                   s, svcAttrs, services[s].characteristicCount);
     }
 
+    BLE_LOGGER(debug, "buildGattAttributes: %d services, %d total chars", serviceCount, globalCharIdx);
+
+    // Reset notification tracking for all characteristics
+    memset(zephyrNotifEnabled, 0, sizeof(zephyrNotifEnabled));
     return 0;
 }
 
@@ -426,7 +509,10 @@ void HMS_BLE::zephyrDisconnectedCallback(struct bt_conn *conn, uint8_t reason) {
     if (instance) {
         uint8_t mac[6];
         extractMacAddress(conn, mac);
-        
+
+        // Reset notification tracking for next connection
+        memset(instance->zephyrNotifEnabled, 0, sizeof(instance->zephyrNotifEnabled));
+
         if (instance->zephyrConnection) {
             bt_conn_unref(instance->zephyrConnection);
             instance->zephyrConnection = NULL;
@@ -440,38 +526,24 @@ void HMS_BLE::zephyrDisconnectedCallback(struct bt_conn *conn, uint8_t reason) {
 }
 
 ssize_t HMS_BLE::zephyrReadCallback(
-    struct bt_conn *conn, const struct bt_gatt_attr *attr,void *buf, uint16_t len, uint16_t offset
+    struct bt_conn *conn, const struct bt_gatt_attr *attr, void *buf, uint16_t len, uint16_t offset
 ) {
-    // Retrieve characteristic index from user_data
-    int charIndex = (int)((intptr_t)attr->user_data);
-    
-    if (instance && instance->readCallback) {
-        // Call user callback to update data if needed
-        // Note: This is a blocking call in Zephyr context
-        
-        // We don't have a per-characteristic data buffer in the main class except 'data'
-        // The main class design seems to share 'data' buffer or expects user to handle it?
-        // Looking at HMS_BLE.h, 'data' is a single buffer.
-        // But 'sendData' takes a charUUID.
-        
-        // For read, we'll return the last known data or 0 if not set?
-        // The ESP32 implementation uses NimBLECharacteristic which holds value.
-        // Here we don't hold value in the attribute.
-        
-        // We'll return 0 bytes for now unless we add value storage per characteristic
-        // or invoke the callback to get data.
-        // The signature of readCallback is: void(const char* charUUID, uint8_t* data, size_t* length, ...)
-        
+    int globalCharIdx = (int)((intptr_t)attr->user_data);
+
+    if (instance && instance->readCallback && globalCharIdx >= 0) {
+        int svcIdx = instance->zephyrCharServiceMap[globalCharIdx];
+
         size_t outLen = HMS_BLE_MAX_DATA_LENGTH;
         uint8_t tempBuf[HMS_BLE_MAX_DATA_LENGTH] = {0};
         uint8_t mac[6];
         extractMacAddress(conn, mac);
-        
+
         instance->readCallback(
-            instance->characteristics[charIndex].uuid.c_str(), 
+            instance->services[svcIdx].service.uuid.c_str(),
+            instance->services[svcIdx].characteristics[instance->zephyrCharLocalMap[globalCharIdx]].uuid.c_str(),
             tempBuf, &outLen, mac
         );
-                               
+
         return bt_gatt_attr_read(conn, attr, buf, len, offset, tempBuf, outLen);
     }
 
@@ -479,63 +551,73 @@ ssize_t HMS_BLE::zephyrReadCallback(
 }
 
 ssize_t HMS_BLE::zephyrWriteCallback(
-    struct bt_conn *conn, const struct bt_gatt_attr *attr,const void *buf, uint16_t len, uint16_t offset, uint8_t flags
+    struct bt_conn *conn, const struct bt_gatt_attr *attr, const void *buf, uint16_t len, uint16_t offset, uint8_t flags
 ) {
-    int charIndex = (int)((intptr_t)attr->user_data);
-    
-    if (instance) {
-        // Copy data to instance buffer (limited by max length)
+    int globalCharIdx = (int)((intptr_t)attr->user_data);
+
+    if (instance && globalCharIdx >= 0) {
+        int svcIdx = instance->zephyrCharServiceMap[globalCharIdx];
+        int localIdx = instance->zephyrCharLocalMap[globalCharIdx];
+
+        // Store in per-service buffer
         size_t copyLen = (len > HMS_BLE_MAX_DATA_LENGTH) ? HMS_BLE_MAX_DATA_LENGTH : len;
-        memcpy(instance->data, buf, copyLen);
-        instance->dataLength = copyLen;
-        instance->received = true; // Flag for loop()
-        
-        BLE_LOGGER(debug, "Write received on char %d, len %d", charIndex, len);
+        memcpy(instance->services[svcIdx].data, buf, copyLen);
+        instance->services[svcIdx].dataLength = copyLen;
+        instance->services[svcIdx].received = true;
+
+        // Also store in legacy shared buffer for backward compatibility
+        if (svcIdx == 0) {
+            memcpy(instance->data, buf, copyLen);
+            instance->dataLength = copyLen;
+            instance->received = true;
+        }
+
+        BLE_LOGGER(debug, "Write received on service %d char %d, len %d", svcIdx, localIdx, len);
 
         if (instance->writeCallback) {
             uint8_t mac[6];
             extractMacAddress(conn, mac);
             instance->writeCallback(
-                instance->characteristics[charIndex].uuid.c_str(), 
+                instance->services[svcIdx].service.uuid.c_str(),
+                instance->services[svcIdx].characteristics[localIdx].uuid.c_str(),
                 (const uint8_t*)buf, len, mac
             );
         }
     }
-    
+
     return len;
 }
 
 void HMS_BLE::zephyrCccChangedCallback(const struct bt_gatt_attr *attr, uint16_t value) {
-    // Find which characteristic this CCC belongs to
-    // This is hard because attr->user_data points to the CCC cfg array, not the char index
-    // We can iterate our attributes to find the match
-    
     if (!instance) return;
-    
-    int charIndex = -1;
-    // Simple search: check address of CCC cfg
+
+    int globalCharIdx = -1;
     for (int i = 0; i < HMS_BLE_MAX_CHARACTERISTICS; i++) {
         if (attr->user_data == &instance->zephyrCccObjects[i]) {
-            charIndex = i;
+            globalCharIdx = i;
             break;
         }
     }
-    
-    if (charIndex >= 0) {
+
+    if (globalCharIdx >= 0) {
+        int svcIdx   = instance->zephyrCharServiceMap[globalCharIdx];
+        int localIdx = instance->zephyrCharLocalMap[globalCharIdx];
         bool enabled = (value == BT_GATT_CCC_NOTIFY || value == BT_GATT_CCC_INDICATE);
-        BLE_LOGGER(info, "Notifications %s for char %d", enabled ? "enabled" : "disabled", charIndex);
-        
+        instance->zephyrNotifEnabled[globalCharIdx] = enabled;
+        BLE_LOGGER(info, "Notifications %s for service %d char %d",
+                   enabled ? "enabled" : "disabled", svcIdx, localIdx);
+
         if (instance->notifyCallback) {
-            // CCC callback doesn't provide the connection directly
-            // Use the stored connection if available
             uint8_t mac[6];
             if (instance->zephyrConnection) {
                 extractMacAddress(instance->zephyrConnection, mac);
             } else {
                 memset(mac, 0, 6);
             }
-            instance->notifyCallback(instance->characteristics[charIndex].uuid.c_str(), 
-                                     enabled, mac);
+            instance->notifyCallback(
+                instance->services[svcIdx].service.uuid.c_str(),
+                instance->services[svcIdx].characteristics[localIdx].uuid.c_str(),
+                enabled, mac);
         }
     }
 }
@@ -548,6 +630,54 @@ void HMS_BLE::zephyrBleTask(void* p1, void* p2, void* p3) {
         pThis->loop();
         k_msleep(10);
     }
+}
+
+HMS_BLE_Status HMS_BLE::sendDataInternal(int serviceIndex, int charIndex, const uint8_t* data, size_t length) {
+    if (!bleConnected || !zephyrConnection) {
+        return HMS_BLE_STATUS_ERROR_NOT_CONNECTED;
+    }
+    if (serviceIndex < 0 || (size_t)serviceIndex >= serviceCount ||
+        charIndex   < 0 || (size_t)charIndex   >= services[serviceIndex].characteristicCount) {
+        return HMS_BLE_STATUS_ERROR_INVALID_CHAR;
+    }
+
+    // Walk the per-service attr array to find this characteristic's value attribute.
+    // Layout per service: [primary_decl, (char_decl + char_value [+ CCC] [+ CUD]) * N]
+    size_t attrIdx = 1U; // skip primary service declaration
+    for (int c = 0; c < charIndex; c++) {
+        attrIdx += 2U; // char decl + value
+        if (services[serviceIndex].characteristics[c].properties & (HMS_BLE_PROPERTY_NOTIFY | HMS_BLE_PROPERTY_INDICATE)) {
+            attrIdx += 1U;
+        }
+        if (!services[serviceIndex].characteristics[c].name.empty()) {
+            attrIdx += 1U;
+        }
+    }
+    attrIdx += 1U; // skip char decl → now at char value
+
+    if (attrIdx >= zephyrAttrCounts[serviceIndex]) {
+        BLE_LOGGER(error, "Attr index %d out of range for service %d (max %d)", attrIdx, serviceIndex, zephyrAttrCounts[serviceIndex]);
+        return HMS_BLE_STATUS_ERROR_INVALID_CHAR;
+    }
+
+    // Compute global char index to check subscription state
+    int globalCharIdx = 0;
+    for (int s = 0; s < serviceIndex; s++) {
+        globalCharIdx += services[s].characteristicCount;
+    }
+    globalCharIdx += charIndex;
+
+    // Only notify if client has subscribed (CCC configured)
+    if (globalCharIdx >= 0 && globalCharIdx < HMS_BLE_MAX_CHARACTERISTICS && !zephyrNotifEnabled[globalCharIdx]) {
+        return HMS_BLE_STATUS_SUCCESS; // silently skip — no subscriber
+    }
+
+    int err = bt_gatt_notify(zephyrConnection, &zephyrGattAttrArrays[serviceIndex][attrIdx], data, length);
+    if (err) {
+        BLE_LOGGER(warn, "bt_gatt_notify failed (err %d)", err);
+        return HMS_BLE_STATUS_ERROR_SEND;
+    }
+    return HMS_BLE_STATUS_SUCCESS;
 }
 
 #endif // HMS_BLE_ZEPHYR_nRF

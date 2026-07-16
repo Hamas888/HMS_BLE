@@ -51,6 +51,7 @@
   #include <string>
   #include <stdio.h>
   #include <stdlib.h>
+  #include <cstring>
   #include <functional>
   #include <zephyr/kernel.h>
   #include <zephyr/bluetooth/bluetooth.h>
@@ -64,9 +65,22 @@
 #elif defined(__STM32__)
   // STM32 HAL specific includes
   #define HMS_BLE_PLATFORM_STM32_HAL
-#elif defined(__linux__) || defined(_WIN32) || defined(__APPLE__)
-  // Desktop specific includes
+#elif defined(__linux__)
+  // Linux: check for BlueZ development headers at compile time
+  #if __has_include(<systemd/sd-bus.h>) && __has_include(<bluetooth/bluetooth.h>)
+    #include <systemd/sd-bus.h>
+    #include <bluetooth/bluetooth.h>
+    #include <thread>
+    #include <chrono>
+    #define HMS_BLE_BLUEZ_LINUX
+    #define HMS_BLE_PLATFORM_DESKTOP
+  #else
+    #error "HMS_BLE on Linux requires BlueZ development libraries.\nInstall: sudo apt install libbluetooth-dev libsystemd-dev (Debian/Ubuntu) or sudo dnf install bluez-libs-devel systemd-devel (Fedora/RHEL)"
+  #endif
+#elif defined(_WIN32) || defined(__APPLE__)
+  // Desktop specific includes (Windows/macOS support coming soon)
   #define HMS_BLE_PLATFORM_DESKTOP
+  #error "HMS_BLE desktop support is currently only available on Linux with BlueZ. Windows and macOS support coming soon."
 #else
   #include <string>
   
@@ -108,6 +122,10 @@
 
 #ifndef HMS_BLE_BACKGROUND_PROCESS_STACK_SIZE
   #define HMS_BLE_BACKGROUND_PROCESS_STACK_SIZE     2048                                                                                            // Background process task stack size
+#endif
+
+#ifndef HMS_BLE_MAX_AD_DATA
+  #define HMS_BLE_MAX_AD_DATA                       31                                                                                              // Maximum advertisement data length (BLE standard)
 #endif
 
 #if HMS_BLE_DEBUG_ENABLED
@@ -169,6 +187,17 @@ typedef enum {
     HMS_BLE_PROPERTY_WRITE_NOTIFY         = NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::NOTIFY,
     HMS_BLE_PROPERTY_READ_WRITE_NOTIFY    = NIMBLE_PROPERTY::READ  | NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::NOTIFY,
     HMS_BLE_PROPERTY_READ_WRITE_INDICATE  = NIMBLE_PROPERTY::READ  | NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::INDICATE,
+  #elif defined(HMS_BLE_BLUEZ_LINUX)
+    HMS_BLE_PROPERTY_READ                 = 0x02,
+    HMS_BLE_PROPERTY_WRITE                = 0x08,
+    HMS_BLE_PROPERTY_NOTIFY               = 0x10,
+    HMS_BLE_PROPERTY_INDICATE             = 0x20,
+    HMS_BLE_PROPERTY_BROADCAST            = 0x01,
+    HMS_BLE_PROPERTY_READ_WRITE           = 0x02 | 0x08,
+    HMS_BLE_PROPERTY_READ_NOTIFY          = 0x02 | 0x10,
+    HMS_BLE_PROPERTY_WRITE_NOTIFY         = 0x08 | 0x10,
+    HMS_BLE_PROPERTY_READ_WRITE_NOTIFY    = 0x02 | 0x08 | 0x10,
+    HMS_BLE_PROPERTY_READ_WRITE_INDICATE  = 0x02 | 0x08 | 0x20,
   #endif
 } HMS_BLE_CharacteristicProperty;                                                                                                           // Characteristic properties enum
 
@@ -202,6 +231,11 @@ typedef struct {
   std::array<uint8_t, 6> data;                                                                                                              // Manufacturer specific data (up to 6 bytes)
 } HMS_BLE_ManufacturerData;
 
+typedef enum {
+  HMS_BLE_MODE_PERIPHERAL         = 0,                                                                                                      // GATT server (default, current behavior)
+  HMS_BLE_MODE_BEACON             = 1,                                                                                                      // Broadcaster — non-connectable advertising
+} HMS_BLE_Mode;                                                                                                                             // BLE device mode
+
 typedef std::function<void(bool connected, const uint8_t* deviceMac)> HMS_BLE_ConnectionCallback;
 typedef std::function<void(const char* serviceUUID, const char* charUUID, bool enabled, const uint8_t* deviceMac)> HMS_BLE_NotifyCallback;
 typedef std::function<void(const char* serviceUUID, const char* charUUID, uint8_t* data, size_t* length, const uint8_t* deviceMac)> HMS_BLE_ReadCallback;
@@ -211,7 +245,7 @@ typedef std::function<void(const char* serviceUUID, const char* charUUID, const 
 /* BLE Module *//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 class HMS_BLE {
   public:
-    HMS_BLE(const char* deviceName);
+    HMS_BLE(const char* deviceName, HMS_BLE_Mode mode = HMS_BLE_MODE_PERIPHERAL);
     ~HMS_BLE();
 
     void loop();
@@ -245,6 +279,26 @@ class HMS_BLE {
     size_t getCharacteristicCount() const                            { return getTotalCharacteristicCount();                  }              // Legacy: total across all services
     uint8_t getMaxClients() const                                    { return HMS_BLE_MAX_CLIENTS;                            }
 
+    // ========== Beacon API ==========
+    HMS_BLE_Status setBeaconData(const uint8_t* ad, size_t adLen, const uint8_t* sd = nullptr, size_t sdLen = 0);                          // Set raw advertisement data for beacon mode
+    HMS_BLE_Mode   getMode() const                                  { return bleMode;                                    }
+
+    // Beacon format builders — fill a buffer with a complete AD payload (including Flags AD).
+    // Returns bytes written, or 0 if buffer too small / invalid input.
+    static size_t buildiBeaconAD(uint8_t* buf, size_t bufSize,
+                                 const uint8_t proximityUUID[16],
+                                 uint16_t major, uint16_t minor,
+                                 int8_t txPower_dBm);
+    static size_t buildEddystoneURL(uint8_t* buf, size_t bufSize,
+                                    const char* url, int8_t txPower_dBm);
+    static size_t buildEddystoneUID(uint8_t* buf, size_t bufSize,
+                                    const uint8_t namespaceID[10],
+                                    const uint8_t instanceID[6],
+                                    int8_t txPower_dBm);
+    static size_t buildManufacturerAD(uint8_t* buf, size_t bufSize,
+                                      uint16_t companyID,
+                                      const uint8_t* mfgData, size_t mfgLen);
+
     void setReadCallback(HMS_BLE_ReadCallback callback)              { readCallback = callback;                               }
     void setWriteCallback(HMS_BLE_WriteCallback callback)            { writeCallback = callback;                              }
     void setNotifyCallback(HMS_BLE_NotifyCallback callback)          { notifyCallback = callback;                             }
@@ -271,6 +325,14 @@ class HMS_BLE {
     size_t                      characteristicCount;                                                                                        // Legacy: kept for compatibility
     HMS_BLE_Characteristic      characteristics[HMS_BLE_MAX_CHARACTERISTICS];                                                               // Legacy: flat array (kept for compatibility)
     
+    // Beacon mode
+    HMS_BLE_Mode                bleMode;
+    bool                        beaconDataSet;
+    uint8_t                     beaconAD[HMS_BLE_MAX_AD_DATA];
+    size_t                      beaconADLen;
+    uint8_t                     beaconSD[HMS_BLE_MAX_AD_DATA];
+    size_t                      beaconSDLen;
+
     // Common state
     bool                        bleConnected;
     bool                        oldConnected;
@@ -300,15 +362,16 @@ class HMS_BLE {
     HMS_BLE_Status sendDataInternal(int serviceIndex, int charIndex, const uint8_t* data, size_t length);
 
     #if defined(HMS_BLE_ZEPHYR_nRF)
-      size_t                        zephyrAttrCount;                                                                                        // Number of attributes
-      struct bt_gatt_attr           *zephyrGattAttrs;                                                                                       // GATT attributes array
-      struct bt_gatt_service        *zephyrGattService;                                                                                     // GATT service structure
+      size_t                        zephyrAttrCounts[HMS_BLE_MAX_SERVICES];                                                                 // Attr count per service
+      struct bt_gatt_attr           *zephyrGattAttrArrays[HMS_BLE_MAX_SERVICES];                                                            // GATT attributes per service
+      struct bt_gatt_service        *zephyrGattServices[HMS_BLE_MAX_SERVICES];                                                              // GATT service structs
+
+      bool                          zephyrServiceIs16[HMS_BLE_MAX_SERVICES];                                                               // true if service UUID is 16-bit
+      uint16_t                      zephyrServiceUUID16Vals[HMS_BLE_MAX_SERVICES];                                                          // 16-bit service UUID values
+      struct bt_uuid_16             zephyrServiceUUID16Arr[HMS_BLE_MAX_SERVICES];                                                           // 16-bit service UUID structures
+      struct bt_uuid_128            zephyrServiceUUIDArr[HMS_BLE_MAX_SERVICES];                                                             // 128-bit service UUID structures
       
-      bool                          zephyrServiceUUID16;                                                                                    // true if service UUID is 16-bit
-      uint16_t                      zephyrServiceUUID16Val;                                                                                 // 16-bit service UUID value
-      struct bt_uuid_16             zephyrServiceUUID16Struct;                                                                              // 16-bit service UUID structure 
-      struct bt_uuid_128            zephyrServiceUUID;                                                                                      // Full 128-bit service UUID structure
-      
+      bool                          zephyrNotifEnabled[HMS_BLE_MAX_CHARACTERISTICS];                                                       // tracks whether client has enabled notifications per char
       bool                          zephyrCharUUID16[HMS_BLE_MAX_CHARACTERISTICS];                                                          // true if char UUID is 16-bit
       struct bt_uuid_128            zephyrCharUUIDs[HMS_BLE_MAX_CHARACTERISTICS];                                                           // Full 128-bit char UUID structures
       struct bt_uuid_16             zephyrCharUUID16Structs[HMS_BLE_MAX_CHARACTERISTICS];                                                   // 16-bit char UUID structures
@@ -317,6 +380,9 @@ class HMS_BLE {
 
       char                          zephyrCharUserDesc[HMS_BLE_MAX_CHARACTERISTICS][64];                                                    // User Description string storage
       struct bt_gatt_cpf            zephyrCharCpf[HMS_BLE_MAX_CHARACTERISTICS];                                                             // User Description Descriptors (CUD) Optional: Presentation Format
+
+      int                           zephyrCharServiceMap[HMS_BLE_MAX_CHARACTERISTICS];                                                     // globalCharIdx → serviceIndex
+      int                           zephyrCharLocalMap[HMS_BLE_MAX_CHARACTERISTICS];                                                       // globalCharIdx → localCharIndex
       
       struct bt_conn                *zephyrConnection;                                                                                      // Connection tracking
 
@@ -392,8 +458,58 @@ class HMS_BLE {
       // Add Zephyr specific members
     #elif defined(HMS_BLE_PLATFORM_STM32_HAL)
       // Add STM32 HAL specific members
-    #elif defined(HMS_BLE_PLATFORM_DESKTOP)
-      // Add Desktop specific members
+    #elif defined(HMS_BLE_BLUEZ_LINUX)
+      // D-Bus connection
+      sd_bus                       *bluezBus                 = nullptr;
+      char                         *bluezAdapterPath         = nullptr;
+      char                         *bluezAppPath             = nullptr;
+
+      // GATT object paths
+      std::string                  bluezServicePaths[HMS_BLE_MAX_SERVICES];
+      std::string                  bluezCharPaths[HMS_BLE_MAX_CHARACTERISTICS];
+      bool                         bluezNotifEnabled[HMS_BLE_MAX_CHARACTERISTICS] = {};
+
+      // Advertisement
+      char                         *bluezAdvPath             = nullptr;
+
+      // Thread
+      std::thread                  *bluezBleThread           = nullptr;
+      volatile bool                bluezThreadRunning        = false;
+
+      // Internal helpers
+      HMS_BLE_Status               bluezSetupAdapter();
+      HMS_BLE_Status               bluezRegisterApp();
+      void                         bluezCleanupApp();
+      void                         uuidStringToBytes(const char *uuidStr, uint8_t bytes[16]);
+
+      // D-Bus vtable callbacks (static, routes via instance pointer)
+      static int                   bluezMessageHandler(sd_bus_message *m, void *userdata, sd_bus_error *retError);
+
+      // GattService1 property getters
+      static int                   bluezServiceGetUUID(sd_bus *bus, const char *path, const char *iface, const char *prop, sd_bus_message *reply, void *userdata, sd_bus_error *retError);
+      static int                   bluezServiceGetPrimary(sd_bus *bus, const char *path, const char *iface, const char *prop, sd_bus_message *reply, void *userdata, sd_bus_error *retError);
+
+      // GattCharacteristic1 property getters
+      static int                   bluezCharGetUUID(sd_bus *bus, const char *path, const char *iface, const char *prop, sd_bus_message *reply, void *userdata, sd_bus_error *retError);
+      static int                   bluezCharGetService(sd_bus *bus, const char *path, const char *iface, const char *prop, sd_bus_message *reply, void *userdata, sd_bus_error *retError);
+      static int                   bluezCharGetValue(sd_bus *bus, const char *path, const char *iface, const char *prop, sd_bus_message *reply, void *userdata, sd_bus_error *retError);
+      static int                   bluezCharGetFlags(sd_bus *bus, const char *path, const char *iface, const char *prop, sd_bus_message *reply, void *userdata, sd_bus_error *retError);
+      static int                   bluezCharGetNotifying(sd_bus *bus, const char *path, const char *iface, const char *prop, sd_bus_message *reply, void *userdata, sd_bus_error *retError);
+
+      // GattCharacteristic1 method handlers
+      static int                   bluezCharMethodReadValue(sd_bus_message *m, void *userdata, sd_bus_error *retError);
+      static int                   bluezCharMethodWriteValue(sd_bus_message *m, void *userdata, sd_bus_error *retError);
+      static int                   bluezCharMethodStartNotify(sd_bus_message *m, void *userdata, sd_bus_error *retError);
+      static int                   bluezCharMethodStopNotify(sd_bus_message *m, void *userdata, sd_bus_error *retError);
+
+      // LEAdvertisement1 property getters
+      static int                   bluezAdvGetType(sd_bus *bus, const char *path, const char *iface, const char *prop, sd_bus_message *reply, void *userdata, sd_bus_error *retError);
+      static int                   bluezAdvGetServiceUUIDs(sd_bus *bus, const char *path, const char *iface, const char *prop, sd_bus_message *reply, void *userdata, sd_bus_error *retError);
+      static int                   bluezAdvGetLocalName(sd_bus *bus, const char *path, const char *iface, const char *prop, sd_bus_message *reply, void *userdata, sd_bus_error *retError);
+      static int                   bluezAdvGetDiscoverable(sd_bus *bus, const char *path, const char *iface, const char *prop, sd_bus_message *reply, void *userdata, sd_bus_error *retError);
+
+      // LEAdvertisement1 method handlers
+      static int                   bluezAdvMethodRelease(sd_bus_message *m, void *userdata, sd_bus_error *retError);
     #endif
 
 };
