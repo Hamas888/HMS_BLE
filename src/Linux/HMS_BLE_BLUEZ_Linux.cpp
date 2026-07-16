@@ -19,8 +19,6 @@
 #define BLUEZ_GATT_CHARACTERISTIC1  "org.bluez.GattCharacteristic1"
 #define BLUEZ_LE_ADVERTISEMENT1     "org.bluez.LEAdvertisement1"
 #define BLUEZ_LE_ADVERTISING_MGR1   "org.bluez.LEAdvertisingManager1"
-#define DBUS_OBJECT_MANAGER         "org.freedesktop.DBus.ObjectManager"
-
 // ==========================================================================
 // UUID conversion: hex-string to 16-byte little-endian (BlueZ D-Bus order)
 // ==========================================================================
@@ -409,60 +407,48 @@ HMS_BLE_Status HMS_BLE::init() {
 HMS_BLE_Status HMS_BLE::bluezSetupAdapter() {
     int r;
     sd_bus_error error = SD_BUS_ERROR_NULL;
-    sd_bus_message* reply = nullptr;
 
-    r = sd_bus_call_method(bluezBus, "org.bluez", "/",
-                           DBUS_OBJECT_MANAGER, "GetManagedObjects",
-                           &error, &reply, "");
-    if (r < 0) {
-        BLE_LOGGER(error, "Failed to get BlueZ managed objects: %s", error.message);
-        sd_bus_error_free(&error);
-        return HMS_BLE_STATUS_ERROR_INIT;
-    }
-
-    r = sd_bus_message_enter_container(reply, SD_BUS_TYPE_ARRAY, "{oa{sa{sv}}}");
-    if (r < 0) { sd_bus_message_unref(reply); return HMS_BLE_STATUS_ERROR_INIT; }
-
-    const char* objPath = nullptr;
+    // Try common BlueZ adapter paths directly (simpler than parsing GetManagedObjects)
+    const char* candidatePaths[] = { "/org/bluez/hci0", "/org/bluez/hci1", "/org/bluez/hci2" };
     bool found = false;
 
-    while ((r = sd_bus_message_enter_container(reply, SD_BUS_TYPE_DICT_ENTRY, "oa{sa{sv}}")) > 0) {
-        r = sd_bus_message_read_basic(reply, 'o', &objPath);
-        if (r < 0) break;
-        r = sd_bus_message_enter_container(reply, SD_BUS_TYPE_ARRAY, "{sa{sv}}");
-        if (r < 0) break;
-        while ((r = sd_bus_message_enter_container(reply, SD_BUS_TYPE_DICT_ENTRY, "sa{sv}")) > 0) {
-            const char* iface;
-            r = sd_bus_message_read_basic(reply, 's', &iface);
-            if (r < 0) break;
-            if (strcmp(iface, BLUEZ_ADAPTER1) == 0) {
-                found = true;
-                bluezAdapterPath = strdup(objPath);
-                BLE_LOGGER(debug, "Found adapter: %s", objPath);
-                sd_bus_message_skip(reply, "a{sv}");
-            } else {
-                sd_bus_message_skip(reply, "a{sv}");
-            }
-            r = sd_bus_message_exit_container(reply);
-            if (r < 0) break;
+    for (size_t i = 0; i < sizeof(candidatePaths) / sizeof(candidatePaths[0]); i++) {
+        sd_bus_message* propReply = nullptr;
+        r = sd_bus_get_property(bluezBus, "org.bluez", candidatePaths[i],
+                                BLUEZ_ADAPTER1, "Address",
+                                &error, &propReply, "");
+        if (r < 0) {
+            sd_bus_error_free(&error);
+            continue;
         }
-        r = sd_bus_message_exit_container(reply);
-        if (r < 0 || found) break;
+        sd_bus_message_unref(propReply);
+
+        found = true;
+        bluezAdapterPath = strdup(candidatePaths[i]);
+        BLE_LOGGER(debug, "Found BlueZ adapter at %s", candidatePaths[i]);
+        break;
     }
-    sd_bus_message_exit_container(reply);
-    sd_bus_message_unref(reply);
 
     if (!found) {
-        BLE_LOGGER(error, "No BlueZ adapter found");
+        BLE_LOGGER(error, "No BlueZ adapter found. Check: btmgmt info, systemctl status bluetooth");
         return HMS_BLE_STATUS_ERROR_INIT;
     }
 
-    sd_bus_set_property(bluezBus, "org.bluez", bluezAdapterPath,
-                        BLUEZ_ADAPTER1, "Powered", &error, "b", 1);
-    sd_bus_error_free(&error);
+    // Power on adapter
+    r = sd_bus_set_property(bluezBus, "org.bluez", bluezAdapterPath,
+                            BLUEZ_ADAPTER1, "Powered", &error, "b", 1);
+    if (r < 0) {
+        BLE_LOGGER(warn, "Failed to set adapter powered: %s", error.message);
+        sd_bus_error_free(&error);
+    }
 
-    sd_bus_set_property(bluezBus, "org.bluez", bluezAdapterPath,
-                        BLUEZ_ADAPTER1, "Alias", nullptr, "s", deviceName);
+    // Set device alias
+    r = sd_bus_set_property(bluezBus, "org.bluez", bluezAdapterPath,
+                            BLUEZ_ADAPTER1, "Alias", &error, "s", deviceName);
+    if (r < 0) {
+        BLE_LOGGER(warn, "Failed to set alias: %s", error.message);
+        sd_bus_error_free(&error);
+    }
 
     return HMS_BLE_STATUS_SUCCESS;
 }
