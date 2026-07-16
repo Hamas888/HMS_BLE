@@ -408,33 +408,25 @@ HMS_BLE_Status HMS_BLE::bluezSetupAdapter() {
     int r;
     sd_bus_error error = SD_BUS_ERROR_NULL;
 
-    // Try common BlueZ adapter paths directly (simpler than parsing GetManagedObjects)
-    const char* candidatePaths[] = { "/org/bluez/hci0", "/org/bluez/hci1", "/org/bluez/hci2" };
-    bool found = false;
+    // BlueZ names controllers /org/bluez/hci{N}. hci0 is almost always the first.
+    bluezAdapterPath = strdup("/org/bluez/hci0");
 
-    for (size_t i = 0; i < sizeof(candidatePaths) / sizeof(candidatePaths[0]); i++) {
-        sd_bus_message* propReply = nullptr;
-        r = sd_bus_get_property(bluezBus, "org.bluez", candidatePaths[i],
-                                BLUEZ_ADAPTER1, "Address",
-                                &error, &propReply, "");
-        if (r < 0) {
-            sd_bus_error_free(&error);
-            continue;
-        }
-        sd_bus_message_unref(propReply);
-
-        found = true;
-        bluezAdapterPath = strdup(candidatePaths[i]);
-        BLE_LOGGER(debug, "Found BlueZ adapter at %s", candidatePaths[i]);
-        break;
-    }
-
-    if (!found) {
-        BLE_LOGGER(error, "No BlueZ adapter found. Check: btmgmt info, systemctl status bluetooth");
+    // Verify adapter exists by reading a property
+    sd_bus_message* reply = nullptr;
+    r = sd_bus_call_method(bluezBus, "org.bluez", bluezAdapterPath,
+                           "org.freedesktop.DBus.Properties", "Get",
+                           &error, &reply,
+                           "ss", BLUEZ_ADAPTER1, "Address");
+    if (r < 0) {
+        BLE_LOGGER(error, "Adapter not found at %s: %s", bluezAdapterPath, error.message);
+        sd_bus_error_free(&error);
+        free(bluezAdapterPath); bluezAdapterPath = nullptr;
         return HMS_BLE_STATUS_ERROR_INIT;
     }
+    sd_bus_message_unref(reply);
+    BLE_LOGGER(debug, "Found BlueZ adapter at %s", bluezAdapterPath);
 
-    // Power on adapter
+    // Power on
     r = sd_bus_set_property(bluezBus, "org.bluez", bluezAdapterPath,
                             BLUEZ_ADAPTER1, "Powered", &error, "b", 1);
     if (r < 0) {
