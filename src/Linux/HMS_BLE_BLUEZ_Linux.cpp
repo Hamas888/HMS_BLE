@@ -486,12 +486,20 @@ HMS_BLE_Status HMS_BLE::bluezRegisterApp() {
     }
 
     // Register application with GattManager1
-    r = sd_bus_call_method(bluezBus, "org.bluez", bluezAdapterPath,
-                           BLUEZ_GATT_MANAGER1, "RegisterApplication",
-                           nullptr, nullptr,
-                           "oa{sv}", bluezAppPath, 0);
-    if (r < 0) {
-        BLE_LOGGER(error, "RegisterApplication failed. Ensure: btmgmt le on");
+    // Build options dict manually: empty a{sv}
+    sd_bus_message* appMsg = nullptr;
+    r = sd_bus_message_new_method_call(bluezBus, &appMsg,
+                                       "org.bluez", bluezAdapterPath,
+                                       BLUEZ_GATT_MANAGER1, "RegisterApplication");
+    if (r >= 0) {
+        sd_bus_message_append(appMsg, "o", bluezAppPath);
+        sd_bus_message_open_container(appMsg, 'a', "{sv}");
+        sd_bus_message_close_container(appMsg);
+        r = sd_bus_call(bluezBus, appMsg, 5000, nullptr, nullptr);
+        sd_bus_message_unref(appMsg);
+        if (r < 0) {
+            BLE_LOGGER(error, "RegisterApplication failed: %s. Ensure: btmgmt le on", strerror(-r));
+        }
     }
 
     BLE_LOGGER(info, "GATT app registered (%d chars, %d services)",
@@ -524,14 +532,24 @@ void HMS_BLE::restartAdvertising() {
         return;
     }
 
-    r = sd_bus_call_method(bluezBus, "org.bluez", bluezAdapterPath,
-                           BLUEZ_LE_ADVERTISING_MGR1, "RegisterAdvertisement",
-                           nullptr, nullptr, "oa{sv}", bluezAdvPath, 0);
-    if (r < 0) {
-        BLE_LOGGER(error, "RegisterAdvertisement failed. Ensure: btmgmt le on");
-    } else {
-        BLE_LOGGER(info, "%s advertising started",
-                   bleMode == HMS_BLE_MODE_BEACON ? "Beacon" : "Peripheral");
+    // Register advertisement with LEAdvertisingManager1
+    // Build options dict manually: empty a{sv}
+    sd_bus_message* advMsg = nullptr;
+    r = sd_bus_message_new_method_call(bluezBus, &advMsg,
+                                       "org.bluez", bluezAdapterPath,
+                                       BLUEZ_LE_ADVERTISING_MGR1, "RegisterAdvertisement");
+    if (r >= 0) {
+        sd_bus_message_append(advMsg, "o", bluezAdvPath);
+        sd_bus_message_open_container(advMsg, 'a', "{sv}");
+        sd_bus_message_close_container(advMsg);
+        r = sd_bus_call(bluezBus, advMsg, 5000, nullptr, nullptr);
+        sd_bus_message_unref(advMsg);
+        if (r < 0) {
+            BLE_LOGGER(error, "RegisterAdvertisement failed: %s. Ensure: btmgmt le on", strerror(-r));
+        } else {
+            BLE_LOGGER(info, "%s advertising started",
+                       bleMode == HMS_BLE_MODE_BEACON ? "Beacon" : "Peripheral");
+        }
     }
 }
 
