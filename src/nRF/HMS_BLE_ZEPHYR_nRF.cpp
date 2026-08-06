@@ -3,7 +3,7 @@
 #if defined(HMS_BLE_ZEPHYR_nRF)
 
 #include <zephyr/logging/log.h>
-LOG_MODULE_REGISTER(HMS_BLE_ZEPHYR, LOG_LEVEL_DBG);
+LOG_MODULE_REGISTER(HMS_BLE_ZEPHYR);
 
 // Static connection callbacks structure
 static struct bt_conn_cb conn_callbacks;
@@ -306,17 +306,54 @@ void HMS_BLE::restartAdvertising() {
         ad_count = 2;
     }
 
-    // SD: Device name + optional manufacturer data
-    struct bt_data sd_buf[3];
+    // SD: Device name + optional manufacturer data + external 128-bit service UUIDs
+    // (external = advertised UUIDs not registered as GATT services, e.g. the
+    //  SMP/DFU service added via addAdvertisedService()).
+    uint8_t sd_buf[8][34];
+    struct bt_data sd[8];
     int sd_count = 0;
-    sd_buf[sd_count++] = BT_DATA(BT_DATA_NAME_COMPLETE, (const uint8_t*)deviceName, (uint8_t)strlen(deviceName));
+
+    sd[sd_count].type     = BT_DATA_NAME_COMPLETE;
+    sd[sd_count].data_len = (uint8_t)strlen(deviceName);
+    sd[sd_count].data     = (const uint8_t*)deviceName;
+    sd_count++;
 
     if (manufacturerDataSet) {
         static uint8_t mfg[8];
         mfg[0] = manufacturerData.manufacturer_id[0];
         mfg[1] = manufacturerData.manufacturer_id[1];
         memcpy(&mfg[2], manufacturerData.data.data(), 6);
-        sd_buf[sd_count++] = BT_DATA(BT_DATA_MANUFACTURER_DATA, mfg, sizeof(mfg));
+        sd[sd_count].type     = BT_DATA_MANUFACTURER_DATA;
+        sd[sd_count].data_len = sizeof(mfg);
+        sd[sd_count].data     = mfg;
+        sd_count++;
+    }
+
+    // Append 128-bit UUIDs for advertised services that are NOT registered
+    // GATT services (e.g. SMP/DFU). Registered 128-bit services are already
+    // handled in the AD packet via zephyrServiceUUIDArr[].
+    for (size_t i = 0; i < advCount; i++) {
+        const char* uuid;
+        if (advertisedServiceCount > 0) {
+            uuid = advUUIDs[i];
+        } else {
+            uuid = services[i].service.uuid.c_str();
+        }
+        if (is16BitUUID(uuid)) {
+            continue; // handled in AD
+        }
+        if (findServiceIndex(uuid) >= 0) {
+            continue; // registered service — handled in AD
+        }
+        if (sd_count >= 8) {
+            break;
+        }
+        struct bt_uuid_128* u128 = (struct bt_uuid_128*)&sd_buf[sd_count];
+        convertUUIDStringToZephyr(uuid, u128);
+        sd[sd_count].type     = BT_DATA_UUID128_ALL;
+        sd[sd_count].data_len = 16;
+        sd[sd_count].data     = u128->val;
+        sd_count++;
     }
 
     #ifndef BT_LE_ADV_OPT_CONN
@@ -332,7 +369,7 @@ void HMS_BLE::restartAdvertising() {
 
     k_msleep(50);
 
-    err = bt_le_adv_start(&param, ad_buf, ad_count, sd_buf, sd_count);
+    err = bt_le_adv_start(&param, ad_buf, ad_count, sd, sd_count);
     if (err) {
         BLE_LOGGER(error, "Advertising failed to start (err %d)", err);
         return;
@@ -604,7 +641,7 @@ void HMS_BLE::zephyrCccChangedCallback(const struct bt_gatt_attr *attr, uint16_t
         int localIdx = instance->zephyrCharLocalMap[globalCharIdx];
         bool enabled = (value == BT_GATT_CCC_NOTIFY || value == BT_GATT_CCC_INDICATE);
         instance->zephyrNotifEnabled[globalCharIdx] = enabled;
-        BLE_LOGGER(info, "Notifications %s for service %d char %d",
+        BLE_LOGGER(debug, "Notifications %s for service %d char %d",
                    enabled ? "enabled" : "disabled", svcIdx, localIdx);
 
         if (instance->notifyCallback) {

@@ -14,15 +14,10 @@ add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-std=c++17>)
 add_subdirectory(Modules/HMS_BLE)
 add_subdirectory(Modules/ChronoLog)
 
-# Link HMS_BLE library to app
-target_link_libraries(app PRIVATE HMS_BLE)
+# Link HMS_BLE + ChronoLog library to app
+target_link_libraries(app PRIVATE HMS_BLE ChronoLog)
 
 # Add HMS_BLE include directory
 target_include_directories(app PRIVATE Modules/HMS_BLE/include)
 
 target_sources(app PRIVATE src/main.cpp)
-
-# Define debug flag for HMS_BLE library and consumers
-target_compile_definitions(HMS_BLE 
-    PUBLIC HMS_BLE_DEBUG=1
-)

@@ -8,6 +8,16 @@ if(DEFINED ZEPHYR_BASE)
     zephyr_library_sources(src/HMS_BLE.cpp src/nRF/HMS_BLE_ZEPHYR_nRF.cpp)
     target_include_directories(HMS_BLE PUBLIC include)
 
+    # Optional DFU feature (SMP/MCUmgr OTA server) — enabled via Kconfig
+    if(CONFIG_HMS_BLE_DFU)
+        zephyr_library_sources(src/HMS_DFU.cpp src/nRF/HMS_DFU_ZEPHYR_nRF.cpp)
+        # The DFU backend includes img_mgmt headers, which need MCUboot's
+        # bootutil include path (exposed via the MCUBOOT_BOOTUTIL interface).
+        if(TARGET MCUBOOT_BOOTUTIL)
+            zephyr_library_link_libraries(MCUBOOT_BOOTUTIL)
+        endif()
+    endif()
+
 # Check if we're building with ESP-IDF
 elseif(IDF_PROJECT)
     idf_component_register(

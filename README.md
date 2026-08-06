@@ -9,6 +9,7 @@ A **cross-platform Bluetooth Low Energy (BLE) library** for embedded systems and
 ## 📑 Table of Contents
 
 - [✨ Features](#-features)
+- [📡 OTA DFU Feature (HMS_DFU)](#-ota-dfu-feature-hms_dfu)
 - [🎯 Supported Platforms](#-supported-platforms)
 - [📦 Installation](#-installation)
   - [PlatformIO (Arduino & ESP-IDF)](#platformio-arduino--esp-idf)
@@ -47,6 +48,139 @@ A **cross-platform Bluetooth Low Energy (BLE) library** for embedded systems and
 - **🚀 Zero-Copy Data Transfer**: Efficient data handling for high-frequency updates
 - **⚙️ Highly Configurable**: Compile-time configuration for buffer sizes, max clients, and features
 - **📦 Ready-to-Use Examples**: Complete examples for environmental sensors and custom BLE services
+
+## 📡 OTA DFU Feature (HMS_DFU)
+
+HMS_BLE includes an **optional OTA firmware update feature** (`HMS_DFU`) for the Zephyr/nRF platform. When enabled, the device registers the standard **SMP (Simple Management Protocol)** GATT service via MCUmgr, so the application can be updated over-the-air by any SMP client — the nRF Connect app, the `mcumgr` CLI, or nRF Connect SDK's device manager.
+
+### How it works
+
+- **One device, BLE + DFU together**: the SMP service is registered *alongside* your application's services in the same GATT server. Your app keeps advertising and functioning normally while being OTA-updatable.
+- **MCUboot swap + rollback**: updates are installed to slot-1, swapped in on reset, and automatically confirmed after a configurable delay. If the new image fails to confirm (crash, power loss), MCUboot **reverts to the previous firmware** on the next boot.
+- **Two decision points**:
+  - **Build time** — `CONFIG_HMS_BLE_DFU=y` compiles the DFU stack in; `n` omits it entirely (zero footprint cost).
+  - **Runtime** — `dfu.start()` / `dfu.stop()` controls whether the SMP service is advertised, so the device itself can decide when DFU is reachable (e.g. disable after provisioning).
+
+### Enable it in your Zephyr app
+
+1. Add the module Kconfig to your app's `Kconfig`:
+   ```kconfig
+   rsource "Modules/HMS_BLE/Kconfig"
+   rsource "Modules/ChronoLog/Kconfig"
+   ```
+2. Add the HMS_DFU config overlay to your `CMakeLists.txt` **before** `find_package(Zephyr)`:
+   ```cmake
+   set(CONF_FILE "prj.conf;Modules/HMS_BLE/HMS_BLE.conf;Modules/HMS_BLE/HMS_DFU.conf")
+   ```
+3. Enable the feature in `prj.conf`:
+   ```kconfig
+   CONFIG_HMS_BLE_DFU=y
+   CONFIG_HMS_BLE_DFU_AUTO_CONFIRM_DELAY_SEC=5   # 0 = never auto-confirm (always rollback unless client confirms)
+   ```
+4. Use it in your app:
+   ```cpp
+   #include "HMS_DFU.h"
+
+   HMS_BLE ble("MyApp");
+   HMS_DFU dfu;
+
+   void main(void) {
+       // ... add your services, ble.begin() ...
+       dfu.init(&ble);
+       dfu.start();          // SMP service now advertised — device is OTA-updatable
+       hms_dfu_auto_confirm_loop();  // blocks ~5 s, then confirms the running image
+       // ... rest of app ...
+   }
+   ```
+
+### DFU event logging
+
+The DFU feature logs the full update lifecycle — upload start, progress every 10%,
+upload complete, image confirmed, and reset command — via **two channels**:
+
+- **ChronoLog** (as `HMS_DFU` logger) when `CONFIG_HMS_BLE_DEBUG=y`
+- **Zephyr logging** (module `HMS_DFU_ZEPHYR`), controlled by the app's `CONFIG_LOG_*`
+  settings — the library does **not** force debug level; that's the app's choice.
+
+```
+DFU upload started
+DFU upload progress: 10% (… bytes)
+DFU upload complete — image pending test
+DFU reset command received — rebooting
+```
+
+These come from MCUmgr's built-in callback mechanism (`mgmt_callback`), registered
+automatically when `hms_dfu_auto_confirm_loop()` is called. The MCUmgr notification
+hooks (`MCUMGR_MGMT_NOTIFICATION_HOOKS`, `MCUMGR_GRP_IMG_STATUS_HOOKS`,
+`MCUMGR_GRP_IMG_UPLOAD_CHECK_HOOK`) are **auto-enabled when `CONFIG_HMS_BLE_DEBUG=y`**
+— so detail DFU logging is opt-in via debug mode, and skipped (smaller footprint)
+when debug is off.
+
+### App-side DFU events (callback)
+
+The application can register a callback to be informed of DFU activity directly,
+independent of the library's internal logging:
+
+```cpp
+dfu.setEventCallback([](HMS_DFU_Event event, int detail) {
+    switch (event) {
+    case HMS_DFU_EVENT_UPLOAD_STARTED:  /* detail: 0 */
+    case HMS_DFU_EVENT_UPLOAD_PROGRESS: /* detail: percentage 0-100 */
+    case HMS_DFU_EVENT_UPLOAD_COMPLETE: /* detail: 0 */
+    case HMS_DFU_EVENT_IMAGE_CONFIRMED: /* detail: 0 */
+    case HMS_DFU_EVENT_RESET_REQUESTED: /* detail: 0 */
+    }
+});
+```
+
+This works when the notification hooks are enabled (i.e. debug mode on).
+
+### OTA with rollback (mcumgr CLI)
+
+```bash
+mcumgr conn add ble-ota type=ble connstring="peer_name=MyApp"
+mcumgr -c ble-ota image upload build/zephyr/zephyr.signed.bin
+mcumgr -c ble-ota image test <hash>     # boot new image once
+mcumgr -c ble-ota reset                 # swap + reboot
+# device boots new image, auto-confirms after the delay → permanent
+# (or with delay=0: revert on next reset unless confirmed manually)
+```
+
+### Partition layout
+
+- **Default**: NCS Partition Manager auto-layouts MCUboot `slot0`/`slot1` — no user input needed.
+- **Custom**: override with a `pm_static.yml` or a devicetree overlay resizing `slot0_partition` / `slot1_partition`.
+
+### Footprint for small controllers (nRF54L05, nRF52832)
+
+With `CONFIG_HMS_BLE_DFU=n` nothing extra is compiled. When enabled, tune:
+- `CONFIG_MCUMGR_TRANSPORT_BT_REASSEMBLY=n` (saves the ~2.5 KB reassembly buffer)
+- `CONFIG_MCUMGR_TRANSPORT_NETBUF_SIZE=1280` (smaller SMP packets)
+- `CONFIG_BT_MAX_CONN=1`
+- `CONFIG_HMS_BLE_MAX_SERVICES` / `HMS_BLE_MAX_CHARACTERISTICS_PER_SERVICE` to your app's needs
+
+### ⚙️ Kconfig control knobs (Zephyr / ESP-IDF)
+
+All compile-time macros in `HMS_BLE.h` can be set from Kconfig when the platform
+supports it (Zephyr, ESP-IDF) — the header falls back to the built-in defaults
+elsewhere. The same three-tier pattern as ChronoLog: user macro > Kconfig > default.
+
+| Kconfig symbol | Macro | Default |
+|---|---|---|
+| `CONFIG_HMS_BLE_DEBUG` | `HMS_BLE_DEBUG_ENABLED` | `n` |
+| `CONFIG_HMS_BLE_LOG_LEVEL` | `HMS_BLE_LOG_LEVEL` | `5` (DEBUG) |
+| `CONFIG_HMS_BLE_MAX_DATA_LENGTH` | `HMS_BLE_MAX_DATA_LENGTH` | `32` |
+| `CONFIG_HMS_BLE_MAX_SERVICES` | `HMS_BLE_MAX_SERVICES` | `4` |
+| `CONFIG_HMS_BLE_MAX_CHARACTERISTICS_PER_SERVICE` | `HMS_BLE_MAX_CHARACTERISTICS_PER_SERVICE` | `8` |
+| `CONFIG_HMS_BLE_MAX_CLIENTS` | `HMS_BLE_MAX_CLIENTS` | `4` |
+| `CONFIG_HMS_BLE_BACKGROUND_PROCESS_PRIORITY` | `HMS_BLE_BACKGROUND_PROCESS_PRIORITY` | `5` |
+| `CONFIG_HMS_BLE_BACKGROUND_PROCESS_STACK_SIZE` | `HMS_BLE_BACKGROUND_PROCESS_STACK_SIZE` | `2048` |
+| `CONFIG_HMS_BLE_MAX_AD_DATA` | `HMS_BLE_MAX_AD_DATA` | `31` |
+
+### Current status
+
+- ✅ **Zephyr/nRF (nRF52, nRF53, nRF54L)**: SMP server over BLE, MCUboot swap + auto-confirm rollback
+- 🔄 **ESP32 / Linux**: backends stubbed, coming soon
 
 ## 🎯 Supported Platforms
 
@@ -91,16 +225,47 @@ git clone https://github.com/Hamas888/HMS_BLE.git
 
 ### nRF Connect SDK (Zephyr)
 
+#### Option A — west manifest (automatic fetch, recommended)
+
+HMS_BLE and ChronoLog are registered as Zephyr modules (`zephyr/module.yml` each).
+In a fresh NCS workspace, add both to your project's `west.yml`:
+
+```yaml
+manifest:
+  remotes:
+    - name: hamas
+      url-base: https://github.com/Hamas888
+  projects:
+    - name: hms_ble
+      remote: hamas
+      repo-path: HMS_BLE
+      revision: main
+      path: Modules/HMS_BLE
+    - name: chronolog
+      remote: hamas
+      repo-path: ChronoLog
+      revision: main
+      path: Modules/ChronoLog
+```
+
+Then `west update` fetches both automatically. Both expose a `zephyr/module.yml`,
+so `add_subdirectory` is not needed — just reference `target_link_libraries(app PRIVATE HMS_BLE ChronoLog)`
+and add the Kconfig sources (below).
+
+#### Option B — manual clone
+
 1. Create a `modules` folder in your project root
-2. Clone the repository:
+2. Clone both repositories:
    ```bash
    cd modules
    git clone https://github.com/Hamas888/HMS_BLE.git
+   git clone https://github.com/Hamas888/ChronoLog.git
    ```
 3. Add to your root `CMakeLists.txt`:
    ```cmake
-   add_subdirectory(modules/HMS_BLE)
-   target_link_libraries(app PRIVATE HMS_BLE)
+   add_subdirectory(Modules/HMS_BLE)
+   add_subdirectory(Modules/ChronoLog)
+   target_link_libraries(app PRIVATE HMS_BLE ChronoLog)
    ```
 
 4. Enable Bluetooth in your `prj.conf`:

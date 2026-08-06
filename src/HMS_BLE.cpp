@@ -295,6 +295,63 @@ HMS_BLE_Status HMS_BLE::setAdvertisedServices(const char** serviceUUIDs, size_t 
     return HMS_BLE_STATUS_SUCCESS;
 }
 
+HMS_BLE_Status HMS_BLE::addAdvertisedService(const char* serviceUUID) {
+    if (!serviceUUID) {
+        return HMS_BLE_STATUS_ERROR_INVALID_CHAR;
+    }
+
+    // Already in the list?
+    for (size_t i = 0; i < advertisedServiceCount; i++) {
+        if (strcmp(advertisedServices[i], serviceUUID) == 0) {
+            BLE_LOGGER(debug, "Service %s already in advertised list", serviceUUID);
+            return HMS_BLE_STATUS_SUCCESS;
+        }
+    }
+
+    if (advertisedServiceCount >= HMS_BLE_MAX_SERVICES) {
+        BLE_LOGGER(error, "Cannot advertise more than %d services", HMS_BLE_MAX_SERVICES);
+        return HMS_BLE_STATUS_ERROR_MAX_CHARS;
+    }
+
+    // Allow appending services that aren't registered as GATT services
+    // (e.g. the SMP/DFU service, which Zephyr's MCUmgr registers itself).
+    advertisedServices[advertisedServiceCount++] = serviceUUID;
+
+    // Rebuild advertisement if already running
+    if (bleInitialized) {
+        restartAdvertising();
+    }
+
+    BLE_LOGGER(debug, "Service %s added to advertised list (%d)", serviceUUID, advertisedServiceCount);
+    return HMS_BLE_STATUS_SUCCESS;
+}
+
+HMS_BLE_Status HMS_BLE::removeAdvertisedService(const char* serviceUUID) {
+    if (!serviceUUID) {
+        return HMS_BLE_STATUS_ERROR_INVALID_CHAR;
+    }
+
+    for (size_t i = 0; i < advertisedServiceCount; i++) {
+        if (strcmp(advertisedServices[i], serviceUUID) == 0) {
+            // Shift remaining entries
+            for (size_t j = i; j < advertisedServiceCount - 1; j++) {
+                advertisedServices[j] = advertisedServices[j + 1];
+            }
+            advertisedServiceCount--;
+
+            if (bleInitialized) {
+                restartAdvertising();
+            }
+
+            BLE_LOGGER(debug, "Service %s removed from advertised list (%d)", serviceUUID, advertisedServiceCount);
+            return HMS_BLE_STATUS_SUCCESS;
+        }
+    }
+
+    BLE_LOGGER(warn, "Service %s not in advertised list", serviceUUID);
+    return HMS_BLE_STATUS_SUCCESS;
+}
+
 // New begin() for multi-service - initializes all registered services
 HMS_BLE_Status HMS_BLE::begin(bool backThread) {
     if(bleInitialized) {

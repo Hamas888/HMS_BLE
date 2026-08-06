@@ -93,22 +93,41 @@
 #endif // Platform detection
 
 /* Control Knobs *///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-#ifndef HMS_BLE_DEBUG
-  #define HMS_BLE_DEBUG_ENABLED                     0                                                                                               // Set to 1 to enable debug features
-#else
-  #define HMS_BLE_DEBUG_ENABLED                     HMS_BLE_DEBUG
+/* Three-tier cross-platform pattern (same as ChronoLog):
+ *   1. User-defined macro (build system / -D) wins.
+ *   2. Kconfig-provided CONFIG_HMS_BLE_* (Zephyr, ESP-IDF, ...) if present.
+ *   3. Built-in default.
+ */
+#ifndef HMS_BLE_DEBUG_ENABLED
+  #ifdef CONFIG_HMS_BLE_DEBUG
+    #define HMS_BLE_DEBUG_ENABLED                     CONFIG_HMS_BLE_DEBUG
+  #else
+    #define HMS_BLE_DEBUG_ENABLED                     0                                                                                               // Set to 1 to enable debug features
+  #endif
 #endif
 
 #ifndef HMS_BLE_MAX_DATA_LENGTH
-  #define HMS_BLE_MAX_DATA_LENGTH                   32                                                                                              // Maximum data length for BLE characteristics
+  #ifdef CONFIG_HMS_BLE_MAX_DATA_LENGTH
+    #define HMS_BLE_MAX_DATA_LENGTH                   CONFIG_HMS_BLE_MAX_DATA_LENGTH
+  #else
+    #define HMS_BLE_MAX_DATA_LENGTH                   32                                                                                              // Maximum data length for BLE characteristics
+  #endif
 #endif
 
 #ifndef HMS_BLE_MAX_SERVICES
-  #define HMS_BLE_MAX_SERVICES                      4                                                                                               // Maximum number of services supported
+  #ifdef CONFIG_HMS_BLE_MAX_SERVICES
+    #define HMS_BLE_MAX_SERVICES                      CONFIG_HMS_BLE_MAX_SERVICES
+  #else
+    #define HMS_BLE_MAX_SERVICES                      4                                                                                               // Maximum number of services supported
+  #endif
 #endif
 
 #ifndef HMS_BLE_MAX_CHARACTERISTICS_PER_SERVICE
-  #define HMS_BLE_MAX_CHARACTERISTICS_PER_SERVICE   8                                                                                               // Maximum number of characteristics per service
+  #ifdef CONFIG_HMS_BLE_MAX_CHARACTERISTICS_PER_SERVICE
+    #define HMS_BLE_MAX_CHARACTERISTICS_PER_SERVICE   CONFIG_HMS_BLE_MAX_CHARACTERISTICS_PER_SERVICE
+  #else
+    #define HMS_BLE_MAX_CHARACTERISTICS_PER_SERVICE   8                                                                                               // Maximum number of characteristics per service
+  #endif
 #endif
 
   #ifndef HMS_BLE_MAX_CHARACTERISTICS
@@ -116,26 +135,46 @@
   #endif
 
 #ifndef HMS_BLE_MAX_CLIENTS
-  #define HMS_BLE_MAX_CLIENTS                       4                                                                                               // Maximum number of simultaneous BLE clients (increase for multi-client support)
+  #ifdef CONFIG_HMS_BLE_MAX_CLIENTS
+    #define HMS_BLE_MAX_CLIENTS                       CONFIG_HMS_BLE_MAX_CLIENTS
+  #else
+    #define HMS_BLE_MAX_CLIENTS                       4                                                                                               // Maximum number of simultaneous BLE clients (increase for multi-client support)
+  #endif
 #endif
 
 #ifndef HMS_BLE_BACKGROUND_PROCESS_PRIORITY
-  #define HMS_BLE_BACKGROUND_PROCESS_PRIORITY       5                                                                                               // Background process task priority
+  #ifdef CONFIG_HMS_BLE_BACKGROUND_PROCESS_PRIORITY
+    #define HMS_BLE_BACKGROUND_PROCESS_PRIORITY       CONFIG_HMS_BLE_BACKGROUND_PROCESS_PRIORITY
+  #else
+    #define HMS_BLE_BACKGROUND_PROCESS_PRIORITY       5                                                                                               // Background process task priority
+  #endif
 #endif
 
 #ifndef HMS_BLE_BACKGROUND_PROCESS_STACK_SIZE
-  #define HMS_BLE_BACKGROUND_PROCESS_STACK_SIZE     2048                                                                                            // Background process task stack size
+  #ifdef CONFIG_HMS_BLE_BACKGROUND_PROCESS_STACK_SIZE
+    #define HMS_BLE_BACKGROUND_PROCESS_STACK_SIZE     CONFIG_HMS_BLE_BACKGROUND_PROCESS_STACK_SIZE
+  #else
+    #define HMS_BLE_BACKGROUND_PROCESS_STACK_SIZE     2048                                                                                            // Background process task stack size
+  #endif
 #endif
 
 #ifndef HMS_BLE_MAX_AD_DATA
-  #define HMS_BLE_MAX_AD_DATA                       31                                                                                              // Maximum advertisement data length (BLE standard)
+  #ifdef CONFIG_HMS_BLE_MAX_AD_DATA
+    #define HMS_BLE_MAX_AD_DATA                       CONFIG_HMS_BLE_MAX_AD_DATA
+  #else
+    #define HMS_BLE_MAX_AD_DATA                       31                                                                                              // Maximum advertisement data length (BLE standard)
+  #endif
 #endif
 
 #if HMS_BLE_DEBUG_ENABLED
   #if __has_include("ChronoLog.h")
     #include "ChronoLog.h"
     #ifndef HMS_BLE_LOG_LEVEL
-      #define HMS_BLE_LOG_LEVEL CHRONOLOG_LEVEL_DEBUG
+      #ifdef CONFIG_HMS_BLE_LOG_LEVEL
+        #define HMS_BLE_LOG_LEVEL                     ChronoLogLevel(CONFIG_HMS_BLE_LOG_LEVEL)
+      #else
+        #define HMS_BLE_LOG_LEVEL CHRONOLOG_LEVEL_DEBUG
+      #endif
     #endif
     extern ChronoLogger *bleLogger;
   #else
@@ -258,6 +297,8 @@ class HMS_BLE {
     HMS_BLE_Status addCharacteristicToService(const char* serviceUUID, const HMS_BLE_Characteristic* characteristic);                      // Add characteristic to specific service
     HMS_BLE_Status begin(bool backThread = true);                                                                                           // Initialize all registered services
     HMS_BLE_Status setAdvertisedServices(const char** serviceUUIDs, size_t count);                                                          // Set which services to advertise (max ~31 bytes in adv packet)
+    HMS_BLE_Status addAdvertisedService(const char* serviceUUID);                                                                           // Append a service UUID to advertise (e.g. SMP/DFU service)
+    HMS_BLE_Status removeAdvertisedService(const char* serviceUUID);                                                                        // Remove a service UUID from advertising
     HMS_BLE_Status sendDataToService(const char* serviceUUID, const char* characteristicUUID, const uint8_t* data, size_t length);          // Send data to specific service/characteristic
     
     // Per-service data access

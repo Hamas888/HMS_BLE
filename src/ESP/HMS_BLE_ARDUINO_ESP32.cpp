@@ -233,7 +233,7 @@ void HMS_BLE::BLEConnectionStatus::onConnect(NimBLEServer* pServer, NimBLEConnIn
     if(!hms_ble) return;
     hms_ble->bleConnected = true;
     hms_ble->oldConnected = true;
-    BLE_LOGGER(debug, "BLE Client Connected");
+    BLE_LOGGER(info, "BLE Client Connected");
     if(hms_ble->connectionCallback) {
         const uint8_t* macBytes = getMacAddressBytes(connInfo.getAddress());
         hms_ble->connectionCallback(true, macBytes);
@@ -296,7 +296,7 @@ void HMS_BLE::BLEConnectionStatus::onDisconnect(NimBLEServer* pServer, NimBLECon
     }
     
     hms_ble->bleConnected = false;
-    BLE_LOGGER(debug, "BLE Client Disconnected - Reason: %d", reason);
+    BLE_LOGGER(info, "BLE Client Disconnected - Reason: %d", reason);
     if(hms_ble->connectionCallback) {
         const uint8_t* macBytes = getMacAddressBytes(connInfo.getAddress());
         hms_ble->connectionCallback(false, macBytes);

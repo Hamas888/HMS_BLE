@@ -230,7 +230,7 @@ int HMS_BLE::bluezCharMethodStartNotify(sd_bus_message* m, void* userdata, sd_bu
         return sd_bus_reply_method_errorf(m, "org.bluez.Error.Failed", "Not found");
 
     instance->bluezNotifEnabled[gcidx] = true;
-    BLE_LOGGER(info, "Notifications enabled for svc %d char %d", svcIdx, localIdx);
+    BLE_LOGGER(debug, "Notifications enabled for svc %d char %d", svcIdx, localIdx);
 
     if (instance->notifyCallback) {
         uint8_t mac[6] = {0};
@@ -249,7 +249,7 @@ int HMS_BLE::bluezCharMethodStopNotify(sd_bus_message* m, void* userdata, sd_bus
         return sd_bus_reply_method_errorf(m, "org.bluez.Error.Failed", "Not found");
 
     instance->bluezNotifEnabled[gcidx] = false;
-    BLE_LOGGER(info, "Notifications disabled for svc %d char %d", svcIdx, localIdx);
+    BLE_LOGGER(debug, "Notifications disabled for svc %d char %d", svcIdx, localIdx);
 
     if (instance->notifyCallback) {
         uint8_t mac[6] = {0};
