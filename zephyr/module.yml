@@ -1,0 +1,4 @@
+name: hms_ble
+build:
+  cmake: .
+  kconfig: Kconfig

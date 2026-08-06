@@ -1,0 +1,3 @@
+# Application Kconfig — sources HMS_BLE + ChronoLog module options
+rsource "Modules/HMS_BLE/Kconfig"
+rsource "Modules/ChronoLog/Kconfig"

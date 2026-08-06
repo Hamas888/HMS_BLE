@@ -1,0 +1,101 @@
+# HMS_BLE module Kconfig — defines build-time feature toggles.
+# Source this from your application's Kconfig: source "Modules/HMS_BLE/Kconfig"
+
+menu "HMS_BLE"
+
+config HMS_BLE_DFU
+	bool "Enable HMS_BLE DFU feature (SMP/MCUmgr OTA server)"
+	select MCUMGR_MGMT_NOTIFICATION_HOOKS if HMS_BLE_DEBUG
+	select MCUMGR_GRP_IMG_STATUS_HOOKS if HMS_BLE_DEBUG
+	select MCUMGR_GRP_IMG_UPLOAD_CHECK_HOOK if HMS_BLE_DEBUG
+	help
+	  When enabled, the application links the SMP (Simple Management
+	  Protocol) server over BLE using MCUmgr. The device can then be
+	  updated over-the-air by any SMP client (nRF Connect app, mcumgr
+	  CLI). Requires MCUboot bootloader and a dedicated MCUmgr Kconfig
+	  overlay (Modules/HMS_BLE/HMS_DFU.conf) in the application's
+	  CONF_FILE.
+
+	  When disabled, no DFU code is compiled and the application keeps
+	  the full footprint headroom.
+
+	  When CONFIG_HMS_BLE_DEBUG is also enabled, the MCUmgr DFU event
+	  notification hooks are turned on so the application and library
+	  log upload / test / confirm / reset events in detail. With debug
+	  off, the hooks are skipped for a smaller footprint.
+
+config HMS_BLE_DFU_AUTO_CONFIRM_DELAY_SEC
+	int "DFU auto-confirm delay in seconds (0 = never auto-confirm)"
+	depends on HMS_BLE_DFU
+	default 5
+	range 0 3600
+	help
+	  Seconds to wait after boot before calling boot_write_img_confirmed().
+	  Set to 0 to disable auto-confirm — a "test" upgrade will revert on
+	  every reset unless the client confirms it manually.
+
+# ============================================================================
+# Control knobs — mirror the compile-time macros in include/HMS_BLE.h.
+# Under Zephyr these override the header defaults; on other platforms the
+# header macros are used as before.
+# ============================================================================
+
+config HMS_BLE_DEBUG
+	bool "Enable HMS_BLE debug logging (ChronoLog)"
+	default n
+	help
+	  When enabled, HMS_BLE logs via ChronoLog (requires the ChronoLog
+	  module). Disabled by default — zero logging overhead.
+
+config HMS_BLE_LOG_LEVEL
+	int "HMS_BLE ChronoLog level"
+	depends on HMS_BLE_DEBUG
+	default 5
+	range 0 5
+	help
+	  Default ChronoLog level used by the HMS_BLE logger.
+	  0=NONE, 1=FATAL, 2=ERROR, 3=WARN, 4=INFO, 5=DEBUG.
+
+config HMS_BLE_MAX_DATA_LENGTH
+	int "Maximum data length per BLE characteristic (bytes)"
+	default 32
+	help
+	  Maximum data length for BLE characteristics.
+
+config HMS_BLE_MAX_SERVICES
+	int "Maximum number of BLE services"
+	default 4
+	help
+	  Maximum number of services supported.
+
+config HMS_BLE_MAX_CHARACTERISTICS_PER_SERVICE
+	int "Maximum characteristics per service"
+	default 8
+	help
+	  Maximum number of characteristics per service.
+
+config HMS_BLE_MAX_CLIENTS
+	int "Maximum simultaneous BLE clients"
+	default 4
+	help
+	  Maximum number of simultaneous BLE clients.
+
+config HMS_BLE_BACKGROUND_PROCESS_PRIORITY
+	int "Background process task priority"
+	default 5
+	help
+	  Background process task priority.
+
+config HMS_BLE_BACKGROUND_PROCESS_STACK_SIZE
+	int "Background process task stack size"
+	default 2048
+	help
+	  Background process task stack size.
+
+config HMS_BLE_MAX_AD_DATA
+	int "Maximum advertisement data length (bytes)"
+	default 31
+	help
+	  Maximum advertisement data length (BLE standard is 31).
+
+endmenu

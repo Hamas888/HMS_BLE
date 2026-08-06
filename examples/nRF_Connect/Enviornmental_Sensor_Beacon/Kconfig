@@ -1,0 +1,2 @@
+# Application Kconfig — sources HMS_BLE module options
+rsource "Modules/HMS_BLE/Kconfig"
