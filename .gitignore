@@ -1,1 +1,7 @@
 .commandcode/
+
+# Auto-fetched example modules (git clone by CMakeLists.txt)
+Modules/
+
+# Zephyr build outputs
+build/
