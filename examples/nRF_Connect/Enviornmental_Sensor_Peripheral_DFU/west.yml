@@ -1,0 +1,48 @@
+# HMS_BLE Environmental Sensor + DFU example — standalone workspace manifest.
+#
+# Copy this example folder anywhere, then set up a fresh workspace:
+#
+#   west init -m . --mf west.yml .
+#   west update
+#   west build -b nrf54l15dk/nrf54l15/cpuapp -d build
+#
+# west fetches the nRF Connect SDK (ncs + zephyr) and the two Hamas888
+# modules (HMS_BLE, ChronoLog) into Modules/, so the example is fully
+# self-contained and ready to build. CMake also auto-fetches the modules
+# if you skip west and build directly against an existing NCS install.
+
+manifest:
+  version: "0.13"
+
+  remotes:
+    - name: ncs
+      url-base: https://github.com/nrfconnect
+    - name: hamas
+      url-base: https://github.com/Hamas888
+
+  defaults:
+    remote: ncs
+
+  projects:
+    # nRF Connect SDK — imports zephyr and all NCS dependencies
+    - name: nrf
+      repo-path: sdk-nrf
+      revision: v3.2.0
+      import: true
+
+    # HMS_BLE + ChronoLog as Zephyr modules (auto-fetched)
+    - name: hms_ble
+      remote: hamas
+      repo-path: HMS_BLE
+      revision: main
+      path: Modules/HMS_BLE
+
+    - name: chronolog
+      remote: hamas
+      repo-path: ChronoLog
+      revision: main
+      path: Modules/ChronoLog
+
+  self:
+    # The manifest lives in the example project root (the copied folder).
+    path: .
