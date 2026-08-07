@@ -102,7 +102,7 @@
   #ifdef CONFIG_HMS_BLE_DEBUG
     #define HMS_BLE_DEBUG_ENABLED                     CONFIG_HMS_BLE_DEBUG
   #else
-    #define HMS_BLE_DEBUG_ENABLED                     0                                                                                               // Set to 1 to enable debug features
+    #define HMS_BLE_DEBUG_ENABLED                     0                                                                                     // Set to 1 to enable debug features
   #endif
 #endif
 
@@ -110,7 +110,7 @@
   #ifdef CONFIG_HMS_BLE_MAX_DATA_LENGTH
     #define HMS_BLE_MAX_DATA_LENGTH                   CONFIG_HMS_BLE_MAX_DATA_LENGTH
   #else
-    #define HMS_BLE_MAX_DATA_LENGTH                   32                                                                                              // Maximum data length for BLE characteristics
+    #define HMS_BLE_MAX_DATA_LENGTH                   32                                                                                    // Maximum data length for BLE characteristics
   #endif
 #endif
 
@@ -118,7 +118,7 @@
   #ifdef CONFIG_HMS_BLE_MAX_SERVICES
     #define HMS_BLE_MAX_SERVICES                      CONFIG_HMS_BLE_MAX_SERVICES
   #else
-    #define HMS_BLE_MAX_SERVICES                      4                                                                                               // Maximum number of services supported
+    #define HMS_BLE_MAX_SERVICES                      4                                                                                     // Maximum number of services supported
   #endif
 #endif
 
@@ -126,19 +126,19 @@
   #ifdef CONFIG_HMS_BLE_MAX_CHARACTERISTICS_PER_SERVICE
     #define HMS_BLE_MAX_CHARACTERISTICS_PER_SERVICE   CONFIG_HMS_BLE_MAX_CHARACTERISTICS_PER_SERVICE
   #else
-    #define HMS_BLE_MAX_CHARACTERISTICS_PER_SERVICE   8                                                                                               // Maximum number of characteristics per service
+    #define HMS_BLE_MAX_CHARACTERISTICS_PER_SERVICE   8                                                                                     // Maximum number of characteristics per service
   #endif
 #endif
 
   #ifndef HMS_BLE_MAX_CHARACTERISTICS
-    #define HMS_BLE_MAX_CHARACTERISTICS             (HMS_BLE_MAX_SERVICES * HMS_BLE_MAX_CHARACTERISTICS_PER_SERVICE)                                // Total maximum characteristics (derived)
+    #define HMS_BLE_MAX_CHARACTERISTICS             (HMS_BLE_MAX_SERVICES * HMS_BLE_MAX_CHARACTERISTICS_PER_SERVICE)                       // Total maximum characteristics (derived)
   #endif
 
 #ifndef HMS_BLE_MAX_CLIENTS
   #ifdef CONFIG_HMS_BLE_MAX_CLIENTS
     #define HMS_BLE_MAX_CLIENTS                       CONFIG_HMS_BLE_MAX_CLIENTS
   #else
-    #define HMS_BLE_MAX_CLIENTS                       4                                                                                               // Maximum number of simultaneous BLE clients (increase for multi-client support)
+    #define HMS_BLE_MAX_CLIENTS                       4                                                                                     // Maximum number of simultaneous BLE clients (increase for multi-client support)
   #endif
 #endif
 
@@ -146,7 +146,7 @@
   #ifdef CONFIG_HMS_BLE_BACKGROUND_PROCESS_PRIORITY
     #define HMS_BLE_BACKGROUND_PROCESS_PRIORITY       CONFIG_HMS_BLE_BACKGROUND_PROCESS_PRIORITY
   #else
-    #define HMS_BLE_BACKGROUND_PROCESS_PRIORITY       5                                                                                               // Background process task priority
+    #define HMS_BLE_BACKGROUND_PROCESS_PRIORITY       5                                                                                     // Background process task priority
   #endif
 #endif
 
@@ -154,7 +154,7 @@
   #ifdef CONFIG_HMS_BLE_BACKGROUND_PROCESS_STACK_SIZE
     #define HMS_BLE_BACKGROUND_PROCESS_STACK_SIZE     CONFIG_HMS_BLE_BACKGROUND_PROCESS_STACK_SIZE
   #else
-    #define HMS_BLE_BACKGROUND_PROCESS_STACK_SIZE     2048                                                                                            // Background process task stack size
+    #define HMS_BLE_BACKGROUND_PROCESS_STACK_SIZE     2048                                                                                  // Background process task stack size
   #endif
 #endif
 
@@ -162,7 +162,7 @@
   #ifdef CONFIG_HMS_BLE_MAX_AD_DATA
     #define HMS_BLE_MAX_AD_DATA                       CONFIG_HMS_BLE_MAX_AD_DATA
   #else
-    #define HMS_BLE_MAX_AD_DATA                       31                                                                                              // Maximum advertisement data length (BLE standard)
+    #define HMS_BLE_MAX_AD_DATA                       31                                                                                    // Maximum advertisement data length (BLE standard)
   #endif
 #endif
 
@@ -196,14 +196,14 @@
 
 /* Custom types *////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 typedef enum {
-  HMS_BLE_STATUS_SUCCESS              = 0,
-  HMS_BLE_STATUS_ERROR_INIT           = -1,
-  HMS_BLE_STATUS_ERROR_SEND           = -2,
-  HMS_BLE_STATUS_ERROR_START          = -3,
-  HMS_BLE_STATUS_ERROR_UNKNOWN        = -4,
-  HMS_BLE_STATUS_ERROR_MAX_CHARS      = -5,
-  HMS_BLE_STATUS_ERROR_INVALID_CHAR   = -6,
-  HMS_BLE_STATUS_ERROR_NOT_CONNECTED  = -7,
+  HMS_BLE_STATUS_SUCCESS                  = 0,
+  HMS_BLE_STATUS_ERROR_INIT               = -1,
+  HMS_BLE_STATUS_ERROR_SEND               = -2,
+  HMS_BLE_STATUS_ERROR_START              = -3,
+  HMS_BLE_STATUS_ERROR_UNKNOWN            = -4,
+  HMS_BLE_STATUS_ERROR_MAX_CHARS          = -5,
+  HMS_BLE_STATUS_ERROR_INVALID_CHAR       = -6,
+  HMS_BLE_STATUS_ERROR_NOT_CONNECTED      = -7,
 } HMS_BLE_Status;
 
 typedef enum {
@@ -294,7 +294,7 @@ class HMS_BLE {
     
     // ========== Multi-Service API (New) ==========
     HMS_BLE_Status addService(const HMS_BLE_Service* service);                                                                              // Add a new service
-    HMS_BLE_Status addCharacteristicToService(const char* serviceUUID, const HMS_BLE_Characteristic* characteristic);                      // Add characteristic to specific service
+    HMS_BLE_Status addCharacteristicToService(const char* serviceUUID, const HMS_BLE_Characteristic* characteristic);                       // Add characteristic to specific service
     HMS_BLE_Status begin(bool backThread = true);                                                                                           // Initialize all registered services
     HMS_BLE_Status setAdvertisedServices(const char** serviceUUIDs, size_t count);                                                          // Set which services to advertise (max ~31 bytes in adv packet)
     HMS_BLE_Status addAdvertisedService(const char* serviceUUID);                                                                           // Append a service UUID to advertise (e.g. SMP/DFU service)
@@ -324,24 +324,15 @@ class HMS_BLE {
     uint8_t getMaxClients() const                                    { return HMS_BLE_MAX_CLIENTS;                            }
 
     // ========== Beacon API ==========
-    HMS_BLE_Status setBeaconData(const uint8_t* ad, size_t adLen, const uint8_t* sd = nullptr, size_t sdLen = 0);                          // Set raw advertisement data for beacon mode
-    HMS_BLE_Mode   getMode() const                                  { return bleMode;                                    }
+    HMS_BLE_Status setBeaconData(const uint8_t* ad, size_t adLen, const uint8_t* sd = nullptr, size_t sdLen = 0);                            // Set raw advertisement data for beacon mode
+    HMS_BLE_Mode   getMode() const                                   { return bleMode;                                        }
 
     // Beacon format builders — fill a buffer with a complete AD payload (including Flags AD).
     // Returns bytes written, or 0 if buffer too small / invalid input.
-    static size_t buildiBeaconAD(uint8_t* buf, size_t bufSize,
-                                 const uint8_t proximityUUID[16],
-                                 uint16_t major, uint16_t minor,
-                                 int8_t txPower_dBm);
-    static size_t buildEddystoneURL(uint8_t* buf, size_t bufSize,
-                                    const char* url, int8_t txPower_dBm);
-    static size_t buildEddystoneUID(uint8_t* buf, size_t bufSize,
-                                    const uint8_t namespaceID[10],
-                                    const uint8_t instanceID[6],
-                                    int8_t txPower_dBm);
-    static size_t buildManufacturerAD(uint8_t* buf, size_t bufSize,
-                                      uint16_t companyID,
-                                      const uint8_t* mfgData, size_t mfgLen);
+    static size_t buildiBeaconAD(uint8_t* buf, size_t bufSize, const uint8_t proximityUUID[16], uint16_t major, uint16_t minor, int8_t txPower_dBm);
+    static size_t buildEddystoneURL(uint8_t* buf, size_t bufSize, const char* url, int8_t txPower_dBm);
+    static size_t buildEddystoneUID(uint8_t* buf, size_t bufSize, const uint8_t namespaceID[10], const uint8_t instanceID[6], int8_t txPower_dBm);
+    static size_t buildManufacturerAD(uint8_t* buf, size_t bufSize, uint16_t companyID, const uint8_t* mfgData, size_t mfgLen);
 
     void setReadCallback(HMS_BLE_ReadCallback callback)              { readCallback = callback;                               }
     void setWriteCallback(HMS_BLE_WriteCallback callback)            { writeCallback = callback;                              }
@@ -355,19 +346,19 @@ class HMS_BLE {
 
   private:
     // Service management
-    HMS_BLE_ServiceDescriptor   services[HMS_BLE_MAX_SERVICES];                                                                             // Array of service descriptors
-    size_t                      serviceCount;                                                                                               // Number of registered services
-    const char*                 advertisedServices[HMS_BLE_MAX_SERVICES];                                                                   // Services to advertise
-    size_t                      advertisedServiceCount;                                                                                     // Number of services to advertise
-    bool                        defaultServiceCreated;                                                                                      // Flag for backward compatibility
+    HMS_BLE_ServiceDescriptor   services[HMS_BLE_MAX_SERVICES];                                                                              // Array of service descriptors
+    size_t                      serviceCount;                                                                                                // Number of registered services
+    const char*                 advertisedServices[HMS_BLE_MAX_SERVICES];                                                                    // Services to advertise
+    size_t                      advertisedServiceCount;                                                                                      // Number of services to advertise
+    bool                        defaultServiceCreated;                                                                                       // Flag for backward compatibility
     
     // Legacy shared buffer (for backward compatibility)
-    char                        serviceUUID[40];                                                                                            // Legacy: single service UUID
-    bool                        received;                                                                                                   // Legacy: shared received flag
-    size_t                      dataLength;                                                                                                 // Legacy: shared data length
-    uint8_t                     data[HMS_BLE_MAX_DATA_LENGTH];                                                                              // Legacy: shared data buffer
-    size_t                      characteristicCount;                                                                                        // Legacy: kept for compatibility
-    HMS_BLE_Characteristic      characteristics[HMS_BLE_MAX_CHARACTERISTICS];                                                               // Legacy: flat array (kept for compatibility)
+    char                        serviceUUID[40];                                                                                             // Legacy: single service UUID
+    bool                        received;                                                                                                    // Legacy: shared received flag
+    size_t                      dataLength;                                                                                                  // Legacy: shared data length
+    uint8_t                     data[HMS_BLE_MAX_DATA_LENGTH];                                                                               // Legacy: shared data buffer
+    size_t                      characteristicCount;                                                                                         // Legacy: kept for compatibility
+    HMS_BLE_Characteristic      characteristics[HMS_BLE_MAX_CHARACTERISTICS];                                                                // Legacy: flat array (kept for compatibility)
     
     // Beacon mode
     HMS_BLE_Mode                bleMode;
@@ -401,34 +392,34 @@ class HMS_BLE {
     // Service lookup helpers
     int findServiceIndex(const char* serviceUUID) const;
     int findCharacteristicInService(int serviceIndex, const char* charUUID) const;
-    int findCharacteristicIndex(const char* uuid) const;                                                                                    // Legacy: finds across all services
-    size_t getTotalCharacteristicCount() const;                                                                                             // Get total characteristics across all services
+    int findCharacteristicIndex(const char* uuid) const;                                                                                     // Legacy: finds across all services
+    size_t getTotalCharacteristicCount() const;                                                                                              // Get total characteristics across all services
     HMS_BLE_Status sendDataInternal(int serviceIndex, int charIndex, const uint8_t* data, size_t length);
 
     #if defined(HMS_BLE_ZEPHYR_nRF)
-      size_t                        zephyrAttrCounts[HMS_BLE_MAX_SERVICES];                                                                 // Attr count per service
-      struct bt_gatt_attr           *zephyrGattAttrArrays[HMS_BLE_MAX_SERVICES];                                                            // GATT attributes per service
-      struct bt_gatt_service        *zephyrGattServices[HMS_BLE_MAX_SERVICES];                                                              // GATT service structs
+      size_t                        zephyrAttrCounts[HMS_BLE_MAX_SERVICES];                                                                  // Attr count per service
+      struct bt_gatt_attr           *zephyrGattAttrArrays[HMS_BLE_MAX_SERVICES];                                                             // GATT attributes per service
+      struct bt_gatt_service        *zephyrGattServices[HMS_BLE_MAX_SERVICES];                                                               // GATT service structs
 
-      bool                          zephyrServiceIs16[HMS_BLE_MAX_SERVICES];                                                               // true if service UUID is 16-bit
-      uint16_t                      zephyrServiceUUID16Vals[HMS_BLE_MAX_SERVICES];                                                          // 16-bit service UUID values
-      struct bt_uuid_16             zephyrServiceUUID16Arr[HMS_BLE_MAX_SERVICES];                                                           // 16-bit service UUID structures
-      struct bt_uuid_128            zephyrServiceUUIDArr[HMS_BLE_MAX_SERVICES];                                                             // 128-bit service UUID structures
+      bool                          zephyrServiceIs16[HMS_BLE_MAX_SERVICES];                                                                 // true if service UUID is 16-bit
+      uint16_t                      zephyrServiceUUID16Vals[HMS_BLE_MAX_SERVICES];                                                           // 16-bit service UUID values
+      struct bt_uuid_16             zephyrServiceUUID16Arr[HMS_BLE_MAX_SERVICES];                                                            // 16-bit service UUID structures
+      struct bt_uuid_128            zephyrServiceUUIDArr[HMS_BLE_MAX_SERVICES];                                                              // 128-bit service UUID structures
       
-      bool                          zephyrNotifEnabled[HMS_BLE_MAX_CHARACTERISTICS];                                                       // tracks whether client has enabled notifications per char
-      bool                          zephyrCharUUID16[HMS_BLE_MAX_CHARACTERISTICS];                                                          // true if char UUID is 16-bit
-      struct bt_uuid_128            zephyrCharUUIDs[HMS_BLE_MAX_CHARACTERISTICS];                                                           // Full 128-bit char UUID structures
-      struct bt_uuid_16             zephyrCharUUID16Structs[HMS_BLE_MAX_CHARACTERISTICS];                                                   // 16-bit char UUID structures
+      bool                          zephyrNotifEnabled[HMS_BLE_MAX_CHARACTERISTICS];                                                         // tracks whether client has enabled notifications per char
+      bool                          zephyrCharUUID16[HMS_BLE_MAX_CHARACTERISTICS];                                                           // true if char UUID is 16-bit
+      struct bt_uuid_128            zephyrCharUUIDs[HMS_BLE_MAX_CHARACTERISTICS];                                                            // Full 128-bit char UUID structures
+      struct bt_uuid_16             zephyrCharUUID16Structs[HMS_BLE_MAX_CHARACTERISTICS];                                                    // 16-bit char UUID structures
       
-      struct bt_gatt_chrc           zephyrCharDeclarations[HMS_BLE_MAX_CHARACTERISTICS];                                                    // Characteristic Declarations (needed for bt_gatt_attr_read_chrc)
+      struct bt_gatt_chrc           zephyrCharDeclarations[HMS_BLE_MAX_CHARACTERISTICS];                                                     // Characteristic Declarations (needed for bt_gatt_attr_read_chrc)
 
-      char                          zephyrCharUserDesc[HMS_BLE_MAX_CHARACTERISTICS][64];                                                    // User Description string storage
-      struct bt_gatt_cpf            zephyrCharCpf[HMS_BLE_MAX_CHARACTERISTICS];                                                             // User Description Descriptors (CUD) Optional: Presentation Format
+      char                          zephyrCharUserDesc[HMS_BLE_MAX_CHARACTERISTICS][64];                                                     // User Description string storage
+      struct bt_gatt_cpf            zephyrCharCpf[HMS_BLE_MAX_CHARACTERISTICS];                                                              // User Description Descriptors (CUD) Optional: Presentation Format
 
-      int                           zephyrCharServiceMap[HMS_BLE_MAX_CHARACTERISTICS];                                                     // globalCharIdx → serviceIndex
-      int                           zephyrCharLocalMap[HMS_BLE_MAX_CHARACTERISTICS];                                                       // globalCharIdx → localCharIndex
+      int                           zephyrCharServiceMap[HMS_BLE_MAX_CHARACTERISTICS];                                                       // globalCharIdx → serviceIndex
+      int                           zephyrCharLocalMap[HMS_BLE_MAX_CHARACTERISTICS];                                                         // globalCharIdx → localCharIndex
       
-      struct bt_conn                *zephyrConnection;                                                                                      // Connection tracking
+      struct bt_conn                *zephyrConnection;                                                                                       // Connection tracking
 
       k_tid_t                       zephyrBleThreadId;
       struct k_thread               zephyrBleThread;
@@ -475,10 +466,10 @@ class HMS_BLE {
           void onWrite(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& connInfo) override;
           void onSubscribe(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& connInfo, uint16_t subValue) override;
         private:
-          char      serviceUUID[40] = {0};                                                                                                    // Service UUID for this characteristic
-          char      charUUID[40] = {0};                                                                                                       // Characteristic UUID
-          int       serviceIndex;                                                                                                             // Index into services array
-          int       charIndex;                                                                                                                // Index into service's characteristics array
+          char      serviceUUID[40] = {0};                                                                                                   // Service UUID for this characteristic
+          char      charUUID[40] = {0};                                                                                                      // Characteristic UUID
+          int       serviceIndex;                                                                                                            // Index into services array
+          int       charIndex;                                                                                                               // Index into service's characteristics array
           HMS_BLE   *hms_ble;
       };
       
