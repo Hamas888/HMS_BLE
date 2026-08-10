@@ -117,14 +117,14 @@ static void onWrite(const char *svc, const char *chr, const uint8_t *data, size_
 int main(void) {
     logger.info("=== HMS_BLE Multi-Service Demo ===");
 
-    ble = new HMS_BLE("HMS-BLE-Peripheral");
+    ble = new HMS_BLE("HMS-BLE");
 
     // ---- 1) Manufacturer Data (appears in scan response) ----
-    HMS_BLE_ManufacturerData mfg = {
-        .manufacturer_id    = {0xFF, 0xFF},
-        .data               = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
-    };
-    ble->setManufacturerData(mfg);
+    // HMS_BLE_ManufacturerData mfg = {
+    //     .manufacturer_id    = {0xFF, 0xFF},
+    //     .data               = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
+    // };
+    // ble->setManufacturerData(mfg);
 
     // ---- 2) Register callbacks ----
     ble->setConnectionCallback(onConnect);

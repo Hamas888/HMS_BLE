@@ -84,8 +84,8 @@ static enum mgmt_cb_return dfu_mgmt_callback(uint32_t event_id,
     }
     case MGMT_EVT_OP_IMG_MGMT_DFU_PENDING:
         dfu_last_pct = 0;
-        DFU_LOG_INFO("DFU upload complete — image pending test");
-        LOG_INF("DFU upload complete — image pending test");
+        DFU_LOG_INFO("DFU upload complete -- image pending test");
+        LOG_INF("DFU upload complete -- image pending test");
         dfu_dispatch(HMS_DFU_EVENT_UPLOAD_COMPLETE, 0);
         break;
     case MGMT_EVT_OP_IMG_MGMT_DFU_CONFIRMED:
@@ -94,8 +94,8 @@ static enum mgmt_cb_return dfu_mgmt_callback(uint32_t event_id,
         dfu_dispatch(HMS_DFU_EVENT_IMAGE_CONFIRMED, 0);
         break;
     case MGMT_EVT_OP_OS_MGMT_RESET:
-        DFU_LOG_INFO("DFU reset command received — rebooting");
-        LOG_INF("DFU reset command received — rebooting");
+        DFU_LOG_INFO("DFU reset command received -- rebooting");
+        LOG_INF("DFU reset command received -- rebooting");
         dfu_dispatch(HMS_DFU_EVENT_RESET_REQUESTED, 0);
         break;
     default:
@@ -145,9 +145,9 @@ void hms_dfu_auto_confirm_loop(void)
         LOG_INF("DFU: image confirmed OK");
     }
 #else
-    DFU_LOG_WARN("DFU: auto-confirm disabled — 'test' upgrades will revert on reset");
+    DFU_LOG_WARN("DFU: auto-confirm disabled -- 'test' upgrades will revert on reset");
     DFU_LOG_WARN("DFU: confirm manually via: mcumgr image confirm");
-    LOG_WRN("DFU: auto-confirm disabled — 'test' upgrades will revert on reset");
+    LOG_WRN("DFU: auto-confirm disabled -- 'test' upgrades will revert on reset");
     LOG_WRN("DFU: confirm manually via: mcumgr image confirm");
 #endif
 }

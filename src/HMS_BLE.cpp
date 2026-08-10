@@ -474,7 +474,7 @@ HMS_BLE_Status HMS_BLE::sendDataToService(const char* svcUUID, const char* charU
 
 HMS_BLE_Status HMS_BLE::begin(const char* service_uuid, bool backThread) {
     if(bleMode == HMS_BLE_MODE_BEACON) {
-        BLE_LOGGER(error, "begin(serviceUUID) not supported in beacon mode — use begin() without arguments");
+        BLE_LOGGER(error, "begin(serviceUUID) not supported in beacon mode -- use begin() without arguments");
         return HMS_BLE_STATUS_ERROR_INIT;
     }
 

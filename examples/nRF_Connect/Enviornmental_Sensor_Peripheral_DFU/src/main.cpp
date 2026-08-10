@@ -79,7 +79,7 @@ static void onNotify(const char *svc, const char *chr, bool enabled, const uint8
 }
 
 static void onRead(const char *svc, const char *chr, uint8_t *data, size_t *len, const uint8_t *mac) {
-    logger.info("Read request on %s/%s — preparing response", svc, chr);
+    logger.info("Read request on %s/%s -- preparing response", svc, chr);
 
     if (strcmp(chr, TEMP_CHAR) == 0) {
         memcpy(data, &temperature, sizeof(temperature));
@@ -119,14 +119,14 @@ static void onWrite(const char *svc, const char *chr, const uint8_t *data, size_
 int main(void) {
     logger.info("=== HMS_BLE Multi-Service Demo ===");
 
-    ble = new HMS_BLE("HMS-BLE-Peripheral");
+    ble = new HMS_BLE("HMS-BLE");
 
     // ---- 1) Manufacturer Data (appears in scan response) ----
-    HMS_BLE_ManufacturerData mfg = {
-        .manufacturer_id    = {0xFF, 0xFF},
-        .data               = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
-    };
-    ble->setManufacturerData(mfg);
+    // HMS_BLE_ManufacturerData mfg = {
+    //     .manufacturer_id    = {0xFF, 0xFF},
+    //     .data               = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
+    // };
+    // ble->setManufacturerData(mfg);
 
     // ---- 2) Register callbacks ----
     ble->setConnectionCallback(onConnect);
@@ -215,11 +215,11 @@ int main(void) {
     // ---- 6) Start BLE ----
     st = ble->begin();
     if (st != HMS_BLE_STATUS_SUCCESS) {
-        logger.error("BLE begin() failed: %d — check Kconfig (CONFIG_BT, CONFIG_BT_GATT_DYNAMIC_DB)", st);
+        logger.error("BLE begin() failed: %d -- check Kconfig (CONFIG_BT, CONFIG_BT_GATT_DYNAMIC_DB)", st);
         return -1;
     }
 
-    logger.info("BLE active — device name: HMS-BLE-Demo");
+    logger.info("BLE active -- device name: HMS-BLE-Demo");
     logger.info("Advertised services: %s, %s", ENV_SVC, BATT_SVC);
     logger.info("Notify interval = %u s (write to %s to change)", notifyInterval, CFG_INTERVAL);
 
@@ -230,7 +230,7 @@ int main(void) {
         logger.error("HMS_DFU init/start failed");
         return -1;
     }
-    logger.info("DFU active — device is OTA-updatable (SMP over BLE)");
+    logger.info("DFU active -- device is OTA-updatable (SMP over BLE)");
     hms_dfu_auto_confirm_loop();
 
     // ==================================== Main loop ====================================
